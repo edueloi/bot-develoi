@@ -68,6 +68,41 @@ function amanhaISO() {
   return d.toISOString().slice(0, 10);
 }
 
+// Formatar data para português (ex: "07 de maio de 2026")
+function formatarDataPtBr(dataISO) {
+  if (!dataISO) return 'Data não informada';
+  
+  const meses = [
+    'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+    'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'
+  ];
+  
+  try {
+    // Suporta formato YYYY-MM-DD ou DD/MM/YYYY
+    let dia, mes, ano;
+    
+    if (dataISO.includes('-')) {
+      // Formato: 2026-05-07
+      const partes = dataISO.split('-');
+      ano = partes[0];
+      mes = parseInt(partes[1]) - 1;
+      dia = partes[2];
+    } else if (dataISO.includes('/')) {
+      // Formato: 07/05/2026
+      const partes = dataISO.split('/');
+      dia = partes[0];
+      mes = parseInt(partes[1]) - 1;
+      ano = partes[2];
+    } else {
+      return dataISO;
+    }
+    
+    return `${dia} de ${meses[mes]} de ${ano}`;
+  } catch (err) {
+    return dataISO;
+  }
+}
+
 // Chamada à API de agendamentos
 async function chamarApiAgendamentos(cpf, filtros = {}) {
   const url = new URL(API_BASE);
@@ -99,10 +134,11 @@ async function chamarApiAgendamentos(cpf, filtros = {}) {
 // Formata lista de agendamentos para WhatsApp
 function montarMensagemAgendamentos(tipoDescricao, lista) {
   if (!lista || lista.length === 0) {
-    return `📅 Você não tem ${tipoDescricao}.`;
+    return `*${tipoDescricao}*\n\nVocê não possui agendamentos neste período.`;
   }
 
-  let msg = `📅 *${tipoDescricao.toUpperCase()}*\n\n`;
+  let msg = `*${tipoDescricao}*\n`;
+  msg += `══════════════════════\n\n`;
 
   lista.slice(0, 10).forEach((ag, i) => {
     const hora = ag.horario_formatado || ag.horario || '';
@@ -113,18 +149,18 @@ function montarMensagemAgendamentos(tipoDescricao, lista) {
     const status = ag.status || '';
 
     msg += `*${i + 1}. ${data} às ${hora}*\n`;
-    msg += `👤 ${cliente}\n`;
-    msg += `✂️ ${servico}`;
+    msg += `Cliente: ${cliente}\n`;
+    msg += `Serviço: ${servico}`;
     if (valor) msg += ` - ${valor}`;
-    msg += `\n📊 Status: ${status}\n`;
+    msg += `\nStatus: ${status}\n`;
     if (ag.observacoes) {
-      msg += `📝 ${ag.observacoes}\n`;
+      msg += `Obs: ${ag.observacoes}\n`;
     }
-    msg += `\n`;
+    msg += `──────────────────────\n`;
   });
 
   if (lista.length > 10) {
-    msg += `_+ ${lista.length - 10} agendamentos não exibidos_\n`;
+    msg += `\n_Exibindo 10 de ${lista.length} agendamentos._\n`;
   }
 
   return msg;
@@ -189,34 +225,78 @@ function startBot(client) {
     const cpfNumeros = soNumeros(textoBruto);
     const pareceCPF = cpfNumeros.length === 11;
 
-    if (texto.startsWith('cpf') || (pareceCPF && !cpfPorNumero[numero])) {
+    // Permitir trocar CPF a qualquer momento
+    if (texto.startsWith('cpf') || texto.startsWith('trocar cpf') || texto.startsWith('mudar cpf') || (pareceCPF && !cpfPorNumero[numero])) {
       const cpfLimpo = cpfNumeros;
 
       if (cpfLimpo.length !== 11) {
         await client.sendText(
           numero,
-          '⚠️ *CPF inválido*\n\n' +
-          'Me envie apenas os 11 dígitos do seu CPF ou escreva:\n\n' +
-          '*CPF 12345678900*'
+          '*CPF INVÁLIDO*\n\n' +
+          'Por favor, envie apenas os 11 dígitos do CPF.\n\n' +
+          'Exemplo: *12345678900*\n\n' +
+          'Ou escreva: *CPF 12345678900*'
         );
         return;
       }
 
-      // Salva o vínculo número <-> CPF
+      // Testar se o CPF tem agendamentos (validação básica)
+      console.log(`   🔍 Validando CPF ${cpfLimpo} no sistema...`);
+      
+      const filtros = { limite: 1 };
+      const { ok, data } = await chamarApiAgendamentos(cpfLimpo, filtros);
+      
+      if (!ok || !data.success) {
+        await client.sendText(
+          numero,
+          '*CPF NÃO ENCONTRADO*\n\n' +
+          `O CPF *${cpfLimpo}* não está cadastrado como profissional no sistema.\n\n` +
+          `──────────────────\n` +
+          `*VERIFIQUE SE:*\n` +
+          `• Você digitou corretamente\n` +
+          `• Seu CPF está cadastrado no salão\n` +
+          `• Você é um profissional ativo\n\n` +
+          `Tente novamente ou entre em contato com o administrador.`
+        );
+        console.log(`   ❌ CPF ${cpfLimpo} não encontrado no sistema`);
+        return;
+      }
+
+      // CPF válido - salvar vínculo
+      const cpfAnterior = cpfPorNumero[numero];
       cpfPorNumero[numero] = cpfLimpo;
       
-      console.log(`   ✅ CPF ${cpfLimpo} vinculado ao número ${numero}`);
+      if (cpfAnterior) {
+        console.log(`   🔄 CPF alterado de ${cpfAnterior} para ${cpfLimpo}`);
+      } else {
+        console.log(`   ✅ CPF ${cpfLimpo} vinculado ao número ${numero}`);
+      }
+
+      // Mensagens variadas de boas-vindas
+      const boasVindas = [
+        cpfAnterior ? 'Pronto! CPF alterado com sucesso.' : 'Perfeito! Seu acesso foi liberado.',
+        cpfAnterior ? 'CPF atualizado!' : 'Tudo certo! Você está conectado agora.',
+        cpfAnterior ? 'Ótimo! CPF trocado.' : 'Pronto! Seu CPF foi vinculado com sucesso.',
+        cpfAnterior ? 'Feito! CPF modificado.' : 'Ótimo! Agora você pode consultar seus agendamentos.'
+      ];
+      const msgBoasVindas = boasVindas[Math.floor(Math.random() * boasVindas.length)];
 
       await client.sendText(
         numero,
-        `✅ *CPF vinculado com sucesso!*\n\n` +
-        `Seu CPF *${cpfLimpo}* está agora vinculado ao seu número.\n\n` +
-        `📋 *Comandos disponíveis:*\n\n` +
-        `• *Agendamentos hoje*\n` +
-        `• *Agendamentos amanhã*\n` +
-        `• *Próximos agendamentos*\n` +
-        `• *Todos os agendamentos*\n\n` +
-        `💡 Você também receberá notificações automáticas sempre que um novo agendamento for criado no sistema!`
+        `*${msgBoasVindas}*\n\n` +
+        `CPF: *${cpfLimpo}*\n\n` +
+        `──────────────────\n` +
+        `*ESCOLHA UMA OPÇÃO:*\n\n` +
+        `*1* - Ver agendamentos de hoje\n` +
+        `*2* - Ver agendamentos de amanhã\n` +
+        `*3* - Ver próximos 7 dias\n` +
+        `*4* - Ver todos os agendamentos\n\n` +
+        `──────────────────\n` +
+        `Você receberá notificações automáticas quando:\n` +
+        `• Houver novo agendamento\n` +
+        `• Cliente confirmar presença\n` +
+        `• Faltar 1h para o horário\n\n` +
+        `Digite o número da opção desejada.`
       );
       return;
     }
@@ -228,13 +308,25 @@ function startBot(client) {
     const cpfSalvo = cpfPorNumero[numero];
     
     if (!cpfSalvo) {
+      const saudacoes = [
+        'Olá! Seja bem-vindo(a).',
+        'Oi! Como vai? Prazer em atendê-lo(a).',
+        'Olá! Que bom ter você aqui.',
+        'Oi! Seja bem-vindo(a) ao nosso sistema.'
+      ];
+      const saudacao = saudacoes[Math.floor(Math.random() * saudacoes.length)];
+
       await client.sendText(
         numero,
-        `👋 *Olá! Sou o Bot Secretário do Salão Develoi*\n\n` +
-        `🔒 Este bot é *exclusivo para profissionais*.\n\n` +
-        `Para começar, me envie o seu *CPF* (apenas números):\n\n` +
-        `Exemplo: *12345678900*\n\n` +
-        `_Clientes devem usar o sistema web para agendamentos._`
+        `*${saudacao}*\n\n` +
+        `Sou o assistente virtual do *Salão Develoi*.\n\n` +
+        `Este canal é exclusivo para profissionais do salão.\n\n` +
+        `──────────────────\n` +
+        `*PARA COMEÇAR:*\n\n` +
+        `Por favor, me envie seu *CPF* (apenas números)\n\n` +
+        `Exemplo: 12345678900\n\n` +
+        `──────────────────\n` +
+        `_Clientes devem usar o sistema web para fazer agendamentos._`
       );
       return;
     }
@@ -242,7 +334,84 @@ function startBot(client) {
     console.log(`   🔑 CPF vinculado: ${cpfSalvo}`);
 
     // ====================================
-    // 3) COMANDOS DE CONSULTA
+    // 3) MENU INTERATIVO (prioridade!)
+    // ====================================
+    
+    if (
+      texto === '0' ||
+      texto === 'menu' || 
+      texto === 'ajuda' ||
+      texto === 'oi' || 
+      texto === 'olá' ||
+      texto === 'ola' ||
+      texto === 'comandos'
+    ) {
+      console.log('   📋 Exibindo menu principal...');
+      
+      // Menu com botões clicáveis
+      const buttons = [
+        { buttonId: '1', buttonText: { displayText: '1 - Hoje' } },
+        { buttonId: '2', buttonText: { displayText: '2 - Amanhã' } },
+        { buttonId: '3', buttonText: { displayText: '3 - Próximos 7 dias' } },
+        { buttonId: '4', buttonText: { displayText: '4 - Todos' } }
+      ];
+
+      const saudacoesMenu = [
+        'Como posso ajudar você hoje?',
+        'O que gostaria de consultar?',
+        'Qual informação você precisa?',
+        'No que posso ser útil agora?'
+      ];
+      const pergunta = saudacoesMenu[Math.floor(Math.random() * saudacoesMenu.length)];
+
+      const buttonMessage = {
+        text: `*BOT SECRETÁRIO - SALÃO DEVELOI*\n\n` +
+              `${pergunta}\n\n` +
+              `══════════════════════\n` +
+              `*ESCOLHA UMA OPÇÃO:*\n\n` +
+              `*1* - Agendamentos de hoje\n` +
+              `*2* - Agendamentos de amanhã\n` +
+              `*3* - Próximos 7 dias\n` +
+              `*4* - Todos os agendamentos\n\n` +
+              `══════════════════════\n` +
+              `*NOTIFICAÇÕES AUTOMÁTICAS:*\n` +
+              `Você recebe avisos quando há:\n` +
+              `• Novo agendamento\n` +
+              `• Confirmação de cliente\n` +
+              `• Lembrete (1h antes)\n\n` +
+              `Digite o número ou clique no botão.`,
+        buttons: buttons,
+        headerType: 1
+      };
+
+      // Enviar menu texto simples (mais compatível)
+      await client.sendText(
+        numero,
+        `*BOT SECRETÁRIO - SALÃO DEVELOI*\n\n` +
+        `${pergunta}\n\n` +
+        `══════════════════════\n` +
+        `*ESCOLHA UMA OPÇÃO:*\n\n` +
+        `*1* - Agendamentos de hoje\n` +
+        `*2* - Agendamentos de amanhã\n` +
+        `*3* - Próximos 7 dias\n` +
+        `*4* - Todos os agendamentos\n` +
+        `*0* - Ver este menu\n\n` +
+        `══════════════════════\n` +
+        `*OUTRAS OPÇÕES:*\n` +
+        `Digite *CPF* para trocar de profissional\n\n` +
+        `*NOTIFICAÇÕES AUTOMÁTICAS:*\n` +
+        `Você recebe avisos quando:\n` +
+        `• Novo agendamento criado\n` +
+        `• Cliente confirma presença\n` +
+        `• Lembrete 1 hora antes\n\n` +
+        `Digite apenas o número.`
+      );
+      console.log('   ✅ Menu enviado');
+      return;
+    }
+
+    // ====================================
+    // 4) COMANDOS DE CONSULTA
     // ====================================
 
     // Agendamentos de HOJE (opção 1)
@@ -254,7 +423,7 @@ function startBot(client) {
     ) {
       console.log('   📅 Consultando agendamentos de hoje...');
       
-      await client.sendText(numero, '⏳ _Buscando agendamentos de hoje..._');
+      await client.sendText(numero, '_Buscando agendamentos de hoje..._');
       
       const filtros = {
         data_inicio: hojeISO(),
@@ -266,16 +435,17 @@ function startBot(client) {
       if (!ok) {
         await client.sendText(
           numero,
-          `❌ *Erro ao buscar agendamentos*\n\n` +
-          `${data.message || 'Erro desconhecido'}\n\n` +
-          `Digite *0* para voltar ao menu.`
+          `*ERRO*\n\n` +
+          `Não foi possível buscar os agendamentos.\n\n` +
+          `Detalhes: ${data.message || 'Erro desconhecido'}\n\n` +
+          `──────────────────\nDigite *0* para voltar ao menu.`
         );
         return;
       }
 
       const lista = data.data?.agendamentos || [];
-      const msg = montarMensagemAgendamentos('📅 Agendamentos de Hoje', lista);
-      await client.sendText(numero, msg + `\n\n💡 Digite *0* para voltar ao menu.`);
+      const msg = montarMensagemAgendamentos('AGENDAMENTOS DE HOJE', lista);
+      await client.sendText(numero, msg + `\n\n──────────────────\nDigite *0* para voltar ao menu.`);
       return;
     }
 
@@ -289,7 +459,7 @@ function startBot(client) {
     ) {
       console.log('   📅 Consultando agendamentos de amanhã...');
       
-      await client.sendText(numero, '⏳ _Buscando agendamentos de amanhã..._');
+      await client.sendText(numero, '_Buscando agendamentos de amanhã..._');
       
       const filtros = {
         data_inicio: amanhaISO(),
@@ -301,16 +471,17 @@ function startBot(client) {
       if (!ok) {
         await client.sendText(
           numero,
-          `❌ *Erro ao buscar agendamentos*\n\n` +
-          `${data.message || 'Erro desconhecido'}\n\n` +
-          `Digite *0* para voltar ao menu.`
+          `*ERRO*\n\n` +
+          `Não foi possível buscar os agendamentos.\n\n` +
+          `Detalhes: ${data.message || 'Erro desconhecido'}\n\n` +
+          `──────────────────\nDigite *0* para voltar ao menu.`
         );
         return;
       }
 
       const lista = data.data?.agendamentos || [];
-      const msg = montarMensagemAgendamentos('📆 Agendamentos de Amanhã', lista);
-      await client.sendText(numero, msg + `\n\n💡 Digite *0* para voltar ao menu.`);
+      const msg = montarMensagemAgendamentos('AGENDAMENTOS DE AMANHÃ', lista);
+      await client.sendText(numero, msg + `\n\n──────────────────\nDigite *0* para voltar ao menu.`);
       return;
     }
 
@@ -324,7 +495,7 @@ function startBot(client) {
     ) {
       console.log('   📅 Consultando próximos agendamentos...');
       
-      await client.sendText(numero, '⏳ _Buscando próximos agendamentos..._');
+      await client.sendText(numero, '_Buscando próximos agendamentos..._');
       
       // Próximos 7 dias
       const hoje = new Date();
@@ -342,16 +513,17 @@ function startBot(client) {
       if (!ok) {
         await client.sendText(
           numero,
-          `❌ *Erro ao buscar agendamentos*\n\n` +
-          `${data.message || 'Erro desconhecido'}\n\n` +
-          `Digite *0* para voltar ao menu.`
+          `*ERRO*\n\n` +
+          `Não foi possível buscar os agendamentos.\n\n` +
+          `Detalhes: ${data.message || 'Erro desconhecido'}\n\n` +
+          `──────────────────\nDigite *0* para voltar ao menu.`
         );
         return;
       }
 
       const lista = data.data?.agendamentos || [];
-      const msg = montarMensagemAgendamentos('🔜 Próximos 7 Dias', lista);
-      await client.sendText(numero, msg + `\n\n💡 Digite *0* para voltar ao menu.`);
+      const msg = montarMensagemAgendamentos('PRÓXIMOS 7 DIAS', lista);
+      await client.sendText(numero, msg + `\n\n──────────────────\nDigite *0* para voltar ao menu.`);
       return;
     }
 
@@ -364,7 +536,7 @@ function startBot(client) {
     ) {
       console.log('   📅 Consultando todos os agendamentos...');
       
-      await client.sendText(numero, '⏳ _Buscando todos os agendamentos..._');
+      await client.sendText(numero, '_Buscando todos os agendamentos..._');
       
       const filtros = {
         limite: 100
@@ -375,74 +547,17 @@ function startBot(client) {
       if (!ok) {
         await client.sendText(
           numero,
-          `❌ *Erro ao buscar agendamentos*\n\n` +
-          `${data.message || 'Erro desconhecido'}\n\n` +
-          `Digite *0* para voltar ao menu.`
+          `*ERRO*\n\n` +
+          `Não foi possível buscar os agendamentos.\n\n` +
+          `Detalhes: ${data.message || 'Erro desconhecido'}\n\n` +
+          `──────────────────\nDigite *0* para voltar ao menu.`
         );
         return;
       }
 
       const lista = data.data?.agendamentos || [];
-      const msg = montarMensagemAgendamentos('📋 Todos os Agendamentos', lista);
-      await client.sendText(numero, msg + `\n\n💡 Digite *0* para voltar ao menu.`);
-      return;
-    }
-
-    // ====================================
-    // 4) MENU INTERATIVO COM BOTÕES
-    // ====================================
-    
-    if (
-      texto.includes('ajuda') || 
-      texto === 'menu' || 
-      texto === 'oi' || 
-      texto === 'olá' ||
-      texto === 'ola' ||
-      texto === 'comandos' ||
-      texto === '0'
-    ) {
-      // Menu com botões clicáveis
-      const buttons = [
-        { buttonId: '1', buttonText: { displayText: '📅 Hoje' } },
-        { buttonId: '2', buttonText: { displayText: '📆 Amanhã' } },
-        { buttonId: '3', buttonText: { displayText: '🔜 Próximos' } },
-        { buttonId: '4', buttonText: { displayText: '📋 Todos' } }
-      ];
-
-      const buttonMessage = {
-        text: `🤖 *Bot Secretário - Salão Develoi*\n\n` +
-              `Olá! Sou seu assistente de agendamentos.\n\n` +
-              `📱 *Escolha uma opção abaixo:*\n\n` +
-              `📅 *1* - Agendamentos de hoje\n` +
-              `📆 *2* - Agendamentos de amanhã\n` +
-              `🔜 *3* - Próximos agendamentos (7 dias)\n` +
-              `📋 *4* - Todos os agendamentos\n\n` +
-              `🔔 *Você também recebe notificações automáticas quando:*\n` +
-              `• Novo agendamento é criado\n` +
-              `• Cliente confirma presença\n` +
-              `• Lembrete 1h antes da consulta\n\n` +
-              `💡 _Digite o número ou clique no botão!_`,
-        buttons: buttons,
-        headerType: 1
-      };
-
-      try {
-        await client.sendMessageOptions(numero, buttonMessage);
-      } catch (err) {
-        // Fallback se botões não funcionarem
-        await client.sendText(
-          numero,
-          `🤖 *Bot Secretário - Salão Develoi*\n\n` +
-          `📱 *Digite o número da opção:*\n\n` +
-          `📅 *1* - Agendamentos de hoje\n` +
-          `📆 *2* - Agendamentos de amanhã\n` +
-          `🔜 *3* - Próximos agendamentos (7 dias)\n` +
-          `📋 *4* - Todos os agendamentos\n` +
-          `0️⃣ *0* - Ver menu novamente\n\n` +
-          `🔔 Você recebe notificações automáticas!\n\n` +
-          `💡 _Digite apenas o número_`
-        );
-      }
+      const msg = montarMensagemAgendamentos('TODOS OS AGENDAMENTOS', lista);
+      await client.sendText(numero, msg + `\n\n──────────────────\nDigite *0* para voltar ao menu.`);
       return;
     }
 
@@ -450,16 +565,27 @@ function startBot(client) {
     // 5) COMANDO NÃO RECONHECIDO
     // ====================================
     
+    const desculpas = [
+      'Desculpe, não compreendi sua mensagem.',
+      'Ops! Não consegui entender o que você precisa.',
+      'Hmm, não reconheci esse comando.',
+      'Perdão, não entendi o que você quer dizer.'
+    ];
+    const desculpa = desculpas[Math.floor(Math.random() * desculpas.length)];
+
     await client.sendText(
       numero,
-      `🤔 *Não entendi...*\n\n` +
-      `💡 *Digite um número:*\n\n` +
-      `📅 *1* - Agendamentos de hoje\n` +
-      `📆 *2* - Agendamentos de amanhã\n` +
-      `🔜 *3* - Próximos 7 dias\n` +
-      `📋 *4* - Todos os agendamentos\n` +
-      `0️⃣ *0* - Ver menu completo\n\n` +
-      `Ou envie *menu* para ver as opções.`
+      `*${desculpa}*\n\n` +
+      `──────────────────\n` +
+      `*OPÇÕES DISPONÍVEIS:*\n\n` +
+      `*1* - Agendamentos de hoje\n` +
+      `*2* - Agendamentos de amanhã\n` +
+      `*3* - Próximos 7 dias\n` +
+      `*4* - Todos os agendamentos\n` +
+      `*0* - Ver menu completo\n\n` +
+      `*CPF* - Trocar profissional\n\n` +
+      `──────────────────\n` +
+      `Digite o número ou comando.`
     );
   });
 }
@@ -509,16 +635,20 @@ app.post('/webhook/novo-agendamento', async (req, res) => {
     }
 
     // Monta mensagem de notificação
+    const dataFormatada = formatarDataPtBr(data);
+    
     const msg =
       '🔔 *NOVO AGENDAMENTO RECEBIDO!*\n\n' +
-      `📅 *Data:* ${data || 'Não informada'}\n` +
+      `📅 *Data:* ${dataFormatada}\n` +
       `⏰ *Horário:* ${horario || 'Não informado'}\n` +
       `👤 *Cliente:* ${cliente_nome || 'Não informado'}\n` +
       (cliente_telefone ? `📞 *Telefone:* ${cliente_telefone}\n` : '') +
       `✂️ *Serviço:* ${servico || 'Não informado'}\n` +
       (valor ? `💰 *Valor:* R$ ${Number(valor).toFixed(2)}\n` : '') +
       (observacoes ? `📝 *Obs:* ${observacoes}\n` : '') +
-      `\n_Abra o sistema para ver mais detalhes._`;
+      `\n──────────────────\n` +
+      `🌐 *Acesse o sistema para mais detalhes:*\n` +
+      `https://salao.develoi.com`;
 
     // Envia notificação para o WhatsApp do profissional
     await clientGlobal.sendText(numeroWhats, msg);
@@ -581,15 +711,8 @@ app.post('/webhook/agendamento-confirmado', async (req, res) => {
       });
     }
 
-    // Formata data e horário para ficar mais legível
-    let dataFormatada = data;
-    if (data && data.includes('-')) {
-      // Converte YYYY-MM-DD para DD/MM/YYYY
-      const partes = data.split('-');
-      if (partes.length === 3) {
-        dataFormatada = `${partes[2]}/${partes[1]}/${partes[0]}`;
-      }
-    }
+    // Formata data em português bonito
+    const dataFormatada = formatarDataPtBr(data);
 
     let horaFormatada = horario;
     if (horario && horario.length >= 5) {
@@ -604,10 +727,14 @@ app.post('/webhook/agendamento-confirmado', async (req, res) => {
       `📍 *${estabelecimento || 'Salão'}*\n` +
       `👤 *Profissional:* ${profissional_nome || 'Não informado'}\n` +
       `✂️ *Serviço:* ${servico || 'Não informado'}\n` +
-      `📅 *Data:* ${dataFormatada || 'Não informada'}\n` +
+      `📅 *Data:* ${dataFormatada}\n` +
       `⏰ *Horário:* ${horaFormatada || 'Não informado'}\n` +
       (valor ? `💰 *Valor:* R$ ${Number(valor).toFixed(2)}\n` : '') +
       (observacoes ? `\n📝 *Observações:* ${observacoes}\n` : '') +
+      `\n──────────────────\n` +
+      `_Aguardamos você! 😊_\n\n` +
+      `🌐 *Acesse seu agendamento:*\n` +
+      `https://salao.develoi.com\n` +
       `\n` +
       `_Estamos te esperando! Se precisar remarcar ou cancelar, entre em contato._\n\n` +
       `Até logo! 😊`;
@@ -668,14 +795,8 @@ app.post('/webhook/lembrete-agendamento', async (req, res) => {
 
     let enviados = 0;
 
-    // Formata data e horário
-    let dataFormatada = data;
-    if (data && data.includes('-')) {
-      const partes = data.split('-');
-      if (partes.length === 3) {
-        dataFormatada = `${partes[2]}/${partes[1]}/${partes[0]}`;
-      }
-    }
+    // Formata data em português
+    const dataFormatada = formatarDataPtBr(data);
 
     let horaFormatada = horario;
     if (horario && horario.length >= 5) {
@@ -706,12 +827,14 @@ app.post('/webhook/lembrete-agendamento', async (req, res) => {
           `📍 *${estabelecimento || 'Salão'}*\n` +
           `👤 *Profissional:* ${profissional_nome || 'Não informado'}\n` +
           `✂️ *Serviço:* ${servico || 'Não informado'}\n` +
-          `📅 *Data:* ${dataFormatada || 'Não informada'}\n` +
+          `📅 *Data:* ${dataFormatada}\n` +
           `⏰ *Horário:* ${horaFormatada || 'Não informado'}\n` +
           (valor ? `💰 *Valor:* R$ ${Number(valor).toFixed(2)}\n` : '') +
           (observacoes ? `\n📝 *Observações:* ${observacoes}\n` : '') +
-          `\n` +
-          `_Estamos te esperando! Não se atrase! 😊_`;
+          `\n──────────────────\n` +
+          `_Estamos te esperando! Não se atrase! 😊_\n\n` +
+          `🌐 *Seus agendamentos:*\n` +
+          `https://salao.develoi.com`;
 
         try {
           await clientGlobal.sendText(numeroCliente, msgCliente);
@@ -733,15 +856,17 @@ app.post('/webhook/lembrete-agendamento', async (req, res) => {
         const msgProfissional =
           '⏰ *LEMBRETE: CONSULTA PRÓXIMA*\n\n' +
           `Você tem um agendamento em *${tempoRestante}*:\n\n` +
-          `📅 *Data:* ${dataFormatada || 'Não informada'}\n` +
+          `📅 *Data:* ${dataFormatada}\n` +
           `⏰ *Horário:* ${horaFormatada || 'Não informado'}\n` +
           `👤 *Cliente:* ${cliente_nome || 'Não informado'}\n` +
           (telefone_cliente ? `📞 *Telefone:* ${telefone_cliente}\n` : '') +
           `✂️ *Serviço:* ${servico || 'Não informado'}\n` +
           (valor ? `💰 *Valor:* R$ ${Number(valor).toFixed(2)}\n` : '') +
           (observacoes ? `\n📝 *Obs:* ${observacoes}\n` : '') +
-          `\n` +
-          `_Prepare-se para atender! 👨‍💼_`;
+          `\n──────────────────\n` +
+          `_Prepare-se para atender! 👨‍💼_\n\n` +
+          `🌐 *Ver detalhes no sistema:*\n` +
+          `https://salao.develoi.com`;
 
         try {
           await clientGlobal.sendText(numeroProfissional, msgProfissional);
