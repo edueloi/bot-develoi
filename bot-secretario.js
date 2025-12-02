@@ -18,7 +18,7 @@ const fetch = require('node-fetch');
 const API_BASE = 'https://salao.develoi.com/api/';
 
 // Porta para o webhook HTTP (PHP vai chamar aqui)
-const WEBHOOK_PORT = 3333;
+const WEBHOOK_PORT = 80;
 
 // Mapa em memória: numeroWhats -> CPF
 // Exemplo: '5511999998888@c.us' -> '12345678900'
