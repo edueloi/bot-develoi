@@ -1,0 +1,35 @@
+{
+  "name": "bot-whatsapp-salao-develoi",
+  "version": "1.0.0",
+  "description": "Bot WhatsApp inteligente integrado com APIs do Salão Develoi",
+  "main": "bot-secretario.js",
+  "scripts": {
+    "start": "node bot-secretario.js",
+    "start:secretario": "node bot-secretario.js",
+    "dev": "nodemon bot-secretario.js",
+    "dev:secretario": "nodemon bot-secretario.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "whatsapp",
+    "bot",
+    "chatbot",
+    "salao",
+    "beauty",
+    "wppconnect"
+  ],
+  "author": "Develoi Development Team",
+  "license": "ISC",
+  "dependencies": {
+    "@wppconnect-team/wppconnect": "^1.37.8",
+    "dotenv": "^16.6.1",
+    "express": "^5.2.1",
+    "node-fetch": "^2.7.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

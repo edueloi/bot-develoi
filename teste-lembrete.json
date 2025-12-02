@@ -1,0 +1,14 @@
+{
+  "agendamento_id": 123,
+  "telefone_profissional": "15992675429",
+  "telefone_cliente": "41531443800",
+  "cliente_nome": "Teste Cliente",
+  "profissional_nome": "Eduardo",
+  "estabelecimento": "Salão Develoi",
+  "servico": "Corte",
+  "data": "2025-12-02",
+  "horario": "16:30",
+  "valor": 50,
+  "minutos_restantes": 55,
+  "minutos_antes_configurado": 60
+}

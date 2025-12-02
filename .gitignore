@@ -1,0 +1,32 @@
+# Dependências
+node_modules/
+package-lock.json
+
+# Variáveis de ambiente
+.env
+
+# Sessões do WhatsApp
+tokens/
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+
+# Sistema Operacional
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporários
+temp/
+tmp/
+*.tmp
+
+# PM2
+.pm2/
