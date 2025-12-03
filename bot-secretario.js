@@ -230,6 +230,10 @@ function startBot(client) {
     const textoBruto = (message.body || '').trim();
     const texto = textoBruto.toLowerCase();
 
+    // Extrair CPF logo no início para verificação
+    const cpfNumeros = soNumeros(textoBruto);
+    const pareceCPF = cpfNumeros.length === 11;
+
     console.log(`\n📨 Mensagem de ${numero}:`);
     console.log(`   Conteúdo: ${textoBruto}`);
 
@@ -341,8 +345,16 @@ function startBot(client) {
     // 1) MENU INICIAL (CLIENTE/SUPORTE/VENDAS)
     // ====================================
     
-    // Se não tem CPF vinculado E não escolheu opção ainda, mostrar menu inicial
-    if (!cpfPorNumero[numero] && !['1', '2', '3'].includes(texto)) {
+    // Se não tem CPF vinculado, mostrar menu inicial,
+    // MAS NÃO quando a pessoa estiver mandando um CPF ou comando de CPF
+    if (
+      !cpfPorNumero[numero] &&
+      !['1', '2', '3'].includes(texto) &&   // não escolheu opção
+      !texto.startsWith('cpf') &&
+      !texto.startsWith('trocar cpf') &&
+      !texto.startsWith('mudar cpf') &&
+      !pareceCPF                             // 👈 se parecer CPF, não cai aqui
+    ) {
       const saudacao = saudacaoPorHorario();
       await client.sendText(
         numero,
@@ -423,9 +435,6 @@ function startBot(client) {
     // 2) PROFISSIONAL VINCULANDO CPF (Opção 1)
     // ====================================
     
-    const cpfNumeros = soNumeros(textoBruto);
-    const pareceCPF = cpfNumeros.length === 11;
-
     // Permitir trocar CPF a qualquer momento (ou se escolheu opção 1)
     if (texto === '1' && !cpfPorNumero[numero]) {
       await client.sendText(
@@ -436,6 +445,9 @@ function startBot(client) {
         `*ENVIE SEU CPF:*\n\n` +
         `Apenas números (11 dígitos)\n` +
         `Exemplo: 12345678900\n\n` +
+        `──────────────────\n` +
+        `*0* - Voltar ao menu\n` +
+        `*SAIR* - Encerrar conversa\n` +
         `══════════════════════`
       );
       return;
