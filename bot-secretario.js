@@ -920,7 +920,9 @@ function startBot(client) {
     if (
       texto === '5' ||
       texto.toLowerCase().includes('criar lembrete para cliente') ||
-      texto.toLowerCase().includes('lembrar cliente')
+      texto.toLowerCase().includes('lembrete para cliente') ||
+      texto.toLowerCase().includes('lembrar cliente') ||
+      (texto.toLowerCase().includes('criar') && texto.toLowerCase().includes('lembrete'))
     ) {
       console.log('   🔔 Iniciando criação de lembrete para cliente...');
       
