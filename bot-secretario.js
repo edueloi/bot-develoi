@@ -447,10 +447,13 @@ function startBot(client) {
       if (cpfLimpo.length !== 11) {
         await client.sendText(
           numero,
-          '*CPF INVÁLIDO*\n\n' +
+          '*CPF INVÁLIDO* ❌\n\n' +
           'Por favor, envie apenas os 11 dígitos do CPF.\n\n' +
           'Exemplo: *12345678900*\n\n' +
-          'Ou escreva: *CPF 12345678900*'
+          'Ou escreva: *CPF 12345678900*\n\n' +
+          '──────────────────\n' +
+          '*0* - Voltar ao menu\n' +
+          '*SAIR* - Encerrar conversa'
         );
         return;
       }
@@ -464,20 +467,25 @@ function startBot(client) {
       if (!ok || !data.success) {
         await client.sendText(
           numero,
-          '*CPF NÃO ENCONTRADO*\n\n' +
-          `O CPF *${cpfLimpo}* não está cadastrado como profissional no sistema.\n\n` +
+          '*CPF NÃO ENCONTRADO* ❌\n\n' +
+          `O CPF *${cpfLimpo}* não está cadastrado no sistema.\n\n` +
           `──────────────────\n` +
           `*VERIFIQUE SE:*\n` +
           `• Você digitou corretamente\n` +
-          `• Seu CPF está cadastrado no salão\n` +
+          `• Seu CPF está cadastrado\n` +
           `• Você é um profissional ativo\n\n` +
-          `Tente novamente ou entre em contato com o administrador.`
+          `──────────────────\n` +
+          `*OPÇÕES:*\n` +
+          `• Digite outro CPF para tentar novamente\n` +
+          `• *0* - Voltar ao menu principal\n` +
+          `• *SAIR* - Encerrar conversa\n\n` +
+          `Precisa de ajuda? Digite *SUPORTE*`
         );
         console.log(`   ❌ CPF ${cpfLimpo} não encontrado no sistema`);
         return;
       }
 
-      // CPF válido - salvar vínculo
+      // CPF válido - buscar informações do profissional
       const cpfAnterior = cpfPorNumero[numero];
       cpfPorNumero[numero] = cpfLimpo;
       
@@ -487,30 +495,43 @@ function startBot(client) {
         console.log(`   ✅ CPF ${cpfLimpo} vinculado ao número ${numero}`);
       }
 
-      // Mensagens variadas de boas-vindas
-      const boasVindas = [
-        cpfAnterior ? 'Pronto! CPF alterado com sucesso.' : 'Perfeito! Seu acesso foi liberado.',
-        cpfAnterior ? 'CPF atualizado!' : 'Tudo certo! Você está conectado agora.',
-        cpfAnterior ? 'Ótimo! CPF trocado.' : 'Pronto! Seu CPF foi vinculado com sucesso.',
-        cpfAnterior ? 'Feito! CPF modificado.' : 'Ótimo! Agora você pode consultar seus agendamentos.'
-      ];
-      const msgBoasVindas = boasVindas[Math.floor(Math.random() * boasVindas.length)];
+      // Buscar informações do profissional (nome e estabelecimento)
+      let nomeProfissional = 'Profissional';
+      let estabelecimento = '';
+      
+      if (data.data?.agendamentos && data.data.agendamentos.length > 0) {
+        const primeiroAgendamento = data.data.agendamentos[0];
+        nomeProfissional = primeiroAgendamento.profissional_nome || 'Profissional';
+        estabelecimento = primeiroAgendamento.estabelecimento || '';
+      }
 
+      // Mensagens variadas de boas-vindas
+      const saudacao = saudacaoPorHorario();
+      
       await client.sendText(
         numero,
-        `*${msgBoasVindas}*\n\n` +
-        `CPF: *${cpfLimpo}*\n\n` +
-        `──────────────────\n` +
-        `*ESCOLHA UMA OPÇÃO:*\n\n` +
-        `*1* - Ver agendamentos de hoje\n` +
-        `*2* - Ver agendamentos de amanhã\n` +
-        `*3* - Ver próximos 7 dias\n` +
-        `*4* - Ver todos os agendamentos\n\n` +
-        `──────────────────\n` +
-        `Você receberá notificações automáticas quando:\n` +
-        `• Houver novo agendamento\n` +
+        `*${saudacao}, ${nomeProfissional}!* ✅\n\n` +
+        (estabelecimento ? `📍 *${estabelecimento}*\n\n` : '') +
+        `CPF vinculado: *${cpfLimpo}*\n\n` +
+        `══════════════════════\n` +
+        `*CONSULTAR AGENDAMENTOS:*\n\n` +
+        `*1* - Agendamentos de hoje\n` +
+        `*2* - Agendamentos de amanhã\n` +
+        `*3* - Próximos 7 dias\n` +
+        `*4* - Todos os agendamentos\n\n` +
+        `══════════════════════\n` +
+        `*OUTRAS OPÇÕES:*\n\n` +
+        `*CPF* - Trocar profissional\n` +
+        `*SUPORTE* - Falar com suporte\n` +
+        `*VENDAS* - Falar com vendas\n` +
+        `*0* - Ver menu completo\n` +
+        `*SAIR* - Encerrar conversa\n\n` +
+        `══════════════════════\n` +
+        `*NOTIFICAÇÕES AUTOMÁTICAS:*\n` +
+        `Você receberá avisos quando:\n` +
+        `• Novo agendamento criado\n` +
         `• Cliente confirmar presença\n` +
-        `• Faltar 1h para o horário\n\n` +
+        `• Faltar 1 hora para horário\n\n` +
         `Digite o número da opção desejada.`
       );
       return;
@@ -655,7 +676,7 @@ function startBot(client) {
 
       const lista = data.data?.agendamentos || [];
       const msg = montarMensagemAgendamentos('AGENDAMENTOS DE HOJE', lista);
-      await client.sendText(numero, msg + `\n\n──────────────────\nDigite *0* para voltar ao menu.`);
+      await client.sendText(numero, msg + `\n\n══════════════════════\n*OPÇÕES:*\n*0* - Menu principal\n*SAIR* - Encerrar conversa`);
       return;
     }
 
@@ -681,17 +702,17 @@ function startBot(client) {
       if (!ok) {
         await client.sendText(
           numero,
-          `*ERRO*\n\n` +
+          `*ERRO* ❌\n\n` +
           `Não foi possível buscar os agendamentos.\n\n` +
           `Detalhes: ${data.message || 'Erro desconhecido'}\n\n` +
-          `──────────────────\nDigite *0* para voltar ao menu.`
+          `══════════════════════\n*OPÇÕES:*\n*0* - Menu principal\n*SAIR* - Encerrar conversa`
         );
         return;
       }
 
       const lista = data.data?.agendamentos || [];
       const msg = montarMensagemAgendamentos('AGENDAMENTOS DE AMANHÃ', lista);
-      await client.sendText(numero, msg + `\n\n──────────────────\nDigite *0* para voltar ao menu.`);
+      await client.sendText(numero, msg + `\n\n══════════════════════\n*OPÇÕES:*\n*0* - Menu principal\n*SAIR* - Encerrar conversa`);
       return;
     }
 
@@ -723,17 +744,17 @@ function startBot(client) {
       if (!ok) {
         await client.sendText(
           numero,
-          `*ERRO*\n\n` +
+          `*ERRO* ❌\n\n` +
           `Não foi possível buscar os agendamentos.\n\n` +
           `Detalhes: ${data.message || 'Erro desconhecido'}\n\n` +
-          `──────────────────\nDigite *0* para voltar ao menu.`
+          `══════════════════════\n*OPÇÕES:*\n*0* - Menu principal\n*SAIR* - Encerrar conversa`
         );
         return;
       }
 
       const lista = data.data?.agendamentos || [];
       const msg = montarMensagemAgendamentos('PRÓXIMOS 7 DIAS', lista);
-      await client.sendText(numero, msg + `\n\n──────────────────\nDigite *0* para voltar ao menu.`);
+      await client.sendText(numero, msg + `\n\n══════════════════════\n*OPÇÕES:*\n*0* - Menu principal\n*SAIR* - Encerrar conversa`);
       return;
     }
 
@@ -757,17 +778,17 @@ function startBot(client) {
       if (!ok) {
         await client.sendText(
           numero,
-          `*ERRO*\n\n` +
+          `*ERRO* ❌\n\n` +
           `Não foi possível buscar os agendamentos.\n\n` +
           `Detalhes: ${data.message || 'Erro desconhecido'}\n\n` +
-          `──────────────────\nDigite *0* para voltar ao menu.`
+          `══════════════════════\n*OPÇÕES:*\n*0* - Menu principal\n*SAIR* - Encerrar conversa`
         );
         return;
       }
 
       const lista = data.data?.agendamentos || [];
       const msg = montarMensagemAgendamentos('TODOS OS AGENDAMENTOS', lista);
-      await client.sendText(numero, msg + `\n\n──────────────────\nDigite *0* para voltar ao menu.`);
+      await client.sendText(numero, msg + `\n\n══════════════════════\n*OPÇÕES:*\n*0* - Menu principal\n*SAIR* - Encerrar conversa`);
       return;
     }
 
@@ -834,7 +855,39 @@ function startBot(client) {
     }
 
     // ====================================
-    // 6) COMANDO NÃO RECONHECIDO
+    // 6) COMANDO ESPECIAL: SAIR/ENCERRAR
+    // ====================================
+    
+    if (
+      texto === 'sair' ||
+      texto === 'encerrar' ||
+      texto === 'tchau' ||
+      texto === 'até logo' ||
+      texto === 'ate logo' ||
+      texto === 'obrigado' ||
+      texto === 'obrigada'
+    ) {
+      const despedidas = [
+        `Até logo! Foi um prazer atendê-lo(a). 👋`,
+        `Tchau! Estamos sempre à disposição. 😊`,
+        `Até mais! Qualquer coisa, é só chamar. 👍`,
+        `Obrigado pelo contato! Até a próxima. ✨`
+      ];
+      const despedida = despedidas[Math.floor(Math.random() * despedidas.length)];
+      
+      await client.sendText(
+        numero,
+        `*${despedida}*\n\n` +
+        `Para voltar a usar o bot, basta enviar:\n` +
+        `*OI* ou *MENU* ou *0*\n\n` +
+        `Tenha um ótimo dia! 🌟`
+      );
+      console.log(`   👋 Conversa encerrada por ${numero}`);
+      return;
+    }
+
+    // ====================================
+    // 7) COMANDO NÃO RECONHECIDO
     // ====================================
     
     const desculpas = [
@@ -847,8 +900,8 @@ function startBot(client) {
 
     await client.sendText(
       numero,
-      `*${desculpa}*\n\n` +
-      `──────────────────\n` +
+      `*${desculpa}* 🤔\n\n` +
+      `══════════════════════\n` +
       `*OPÇÕES DISPONÍVEIS:*\n\n` +
       `*1* - Agendamentos de hoje\n` +
       `*2* - Agendamentos de amanhã\n` +
@@ -857,9 +910,10 @@ function startBot(client) {
       `*0* - Ver menu completo\n\n` +
       `*SUPORTE* - Falar com suporte\n` +
       `*VENDAS* - Falar com vendas\n` +
-      `*CPF* - Trocar profissional\n\n` +
-      `──────────────────\n` +
-      `Digite o número ou comando.`
+      `*CPF* - Trocar profissional\n` +
+      `*SAIR* - Encerrar conversa\n\n` +
+      `══════════════════════\n` +
+      `Digite o número ou comando desejado.`
     );
   });
 }
