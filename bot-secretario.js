@@ -921,8 +921,7 @@ function startBot(client) {
       texto === '5' ||
       texto.toLowerCase().includes('criar lembrete para cliente') ||
       texto.toLowerCase().includes('lembrete para cliente') ||
-      texto.toLowerCase().includes('lembrar cliente') ||
-      (texto.toLowerCase().includes('criar') && texto.toLowerCase().includes('lembrete'))
+      texto.toLowerCase().includes('lembrar cliente')
     ) {
       console.log('   🔔 Iniciando criação de lembrete para cliente...');
       
@@ -1425,7 +1424,30 @@ function startBot(client) {
     }
 
     // ====================================
-    // 7) VERIFICAR SE É COMANDO DE LEMBRETE
+    // 7) LEMBRETE PESSOAL (quando a pessoa só diz "lembrete")
+    // ====================================
+    
+    if (
+      texto === 'lembrete' ||
+      texto === 'criar lembrete' ||
+      texto === 'lembrete pessoal'
+    ) {
+      console.log('   ⏰ Usuário pediu lembrete mas sem detalhes...');
+      await client.sendText(
+        numero,
+        `*LEMBRETES PESSOAIS* ⏰\n\n` +
+        `Me diga *o que* e *quando* você quer que eu te lembre.\n\n` +
+        `Exemplos:\n` +
+        `• "lembre-me daqui 15 minutos de ligar para o cliente"\n` +
+        `• "me avise hoje às 18h de postar no Instagram"\n` +
+        `• "lembrete amanhã 9h reunião com fornecedor"\n\n` +
+        `Se quiser criar lembrete *para cliente*, digite *5* no menu.`
+      );
+      return;
+    }
+
+    // ====================================
+    // 7.1) VERIFICAR SE É COMANDO DE LEMBRETE (frases completas)
     // ====================================
     
     if (
@@ -1725,6 +1747,7 @@ function startBot(client) {
       `*2* - Agendamentos de amanhã\n` +
       `*3* - Próximos 7 dias\n` +
       `*4* - Todos os agendamentos\n` +
+      `*5* - Criar lembrete para cliente\n` +
       `*0* - Ver menu completo\n\n` +
       `*SUPORTE* - Falar com suporte\n` +
       `*VENDAS* - Falar com vendas\n` +
@@ -1734,7 +1757,8 @@ function startBot(client) {
       `💡 *Dica:* Tente perguntas como:\n` +
       `• "Tenho cliente hoje?"\n` +
       `• "Quanto vou ganhar essa semana?"\n` +
-      `• "Quem vem amanhã de tarde?"\n\n` +
+      `• "Quem vem amanhã de tarde?"\n` +
+      `• "lembre-me daqui 30 minutos de ligar para o cliente"\n\n` +
       `Digite o número ou comando desejado.`
     );
   });
