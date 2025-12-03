@@ -4,11 +4,14 @@
 // - Notifica automaticamente novos agendamentos
 // - Consulta agendamentos por CPF do profissional
 // - NÃO atende clientes finais
+// - IA integrada para entender linguagem natural
 // ================================================
 
+require('dotenv').config();
 const wppconnect = require('@wppconnect-team/wppconnect');
 const express = require('express');
 const fetch = require('node-fetch');
+const OpenAI = require('openai');
 
 // =============================
 // CONFIGURAÇÕES
@@ -34,9 +37,74 @@ const sessoesAtendimento = {};
 // Cliente global do WPPConnect
 let clientGlobal = null;
 
+// Cliente OpenAI para IA
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
+
 // =============================
 // FUNÇÕES AUXILIARES
 // =============================
+
+// Processar mensagem com IA (GPT-4)
+async function processarComIA(mensagemUsuario, cpfProfissional, contextoAgendamentos = null) {
+  try {
+    const prompt = `Você é um assistente virtual de um salão de beleza. Analise a mensagem do profissional e identifique a intenção.
+
+Profissional (CPF: ${cpfProfissional}) perguntou: "${mensagemUsuario}"
+
+${contextoAgendamentos ? `\n\nCONTEXTO DOS AGENDAMENTOS:\n${JSON.stringify(contextoAgendamentos, null, 2)}` : ''}
+
+RETORNE UM JSON com:
+{
+  "intencao": "consultar_hoje" | "consultar_amanha" | "consultar_semana" | "consultar_todos" | "calcular_faturamento" | "contar_clientes" | "verificar_horario" | "desconhecido",
+  "filtros": {
+    "data_inicio": "YYYY-MM-DD" (opcional),
+    "data_fim": "YYYY-MM-DD" (opcional),
+    "periodo": "manha" | "tarde" | "noite" (opcional),
+    "status": "confirmado" | "pendente" | "cancelado" (opcional)
+  },
+  "resposta_sugerida": "texto amigável baseado nos dados" (se houver contexto)
+}
+
+Exemplos:
+- "tenho cliente hoje?" → intencao: "consultar_hoje"
+- "quem vem amanhã de tarde?" → intencao: "consultar_amanha", filtros: {periodo: "tarde"}
+- "quanto vou ganhar essa semana?" → intencao: "calcular_faturamento", filtros: {data_inicio: "data_inicio_semana", data_fim: "data_fim_semana"}
+
+Responda APENAS com o JSON, sem explicações.`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { 
+          role: "system", 
+          content: "Você é um assistente especializado em interpretar perguntas de profissionais de salão de beleza sobre seus agendamentos. Retorne sempre JSON válido." 
+        },
+        { 
+          role: "user", 
+          content: prompt 
+        }
+      ],
+      temperature: 0.3,
+      max_tokens: 500
+    });
+
+    const respostaIA = completion.choices[0].message.content.trim();
+    console.log('   🤖 Resposta da IA:', respostaIA);
+
+    // Parse do JSON
+    const jsonMatch = respostaIA.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    }
+
+    return { intencao: 'desconhecido' };
+  } catch (error) {
+    console.error('   ❌ Erro ao processar com IA:', error.message);
+    return { intencao: 'desconhecido' };
+  }
+}
 
 // Remove tudo que não é número
 function soNumeros(str = '') {
@@ -899,7 +967,116 @@ function startBot(client) {
     }
 
     // ====================================
-    // 7) COMANDO NÃO RECONHECIDO
+    // 7) PROCESSAMENTO COM IA (INTELIGÊNCIA ARTIFICIAL)
+    // ====================================
+    
+    console.log('   🤖 Tentando processar mensagem com IA...');
+    await client.sendText(numero, '_Analisando sua pergunta..._');
+    
+    const resultadoIA = await processarComIA(textoBruto, cpfSalvo);
+    console.log('   🧠 Intenção identificada:', resultadoIA.intencao);
+    
+    // Processar intenções da IA
+    if (resultadoIA.intencao === 'consultar_hoje') {
+      // Redirecionar para consulta de hoje
+      const filtros = {
+        data_inicio: hojeISO(),
+        data_fim: hojeISO()
+      };
+      
+      const { ok, data } = await chamarApiAgendamentos(cpfSalvo, filtros);
+      if (ok) {
+        const lista = data.data?.agendamentos || [];
+        const msg = montarMensagemAgendamentos('AGENDAMENTOS DE HOJE', lista);
+        await client.sendText(numero, msg + `\n\n══════════════════════\n*OPÇÕES:*\n*0* - Menu principal\n*SAIR* - Encerrar conversa`);
+        return;
+      }
+    } else if (resultadoIA.intencao === 'consultar_amanha') {
+      const filtros = {
+        data_inicio: amanhaISO(),
+        data_fim: amanhaISO()
+      };
+      
+      const { ok, data } = await chamarApiAgendamentos(cpfSalvo, filtros);
+      if (ok) {
+        const lista = data.data?.agendamentos || [];
+        const msg = montarMensagemAgendamentos('AGENDAMENTOS DE AMANHÃ', lista);
+        await client.sendText(numero, msg + `\n\n══════════════════════\n*OPÇÕES:*\n*0* - Menu principal\n*SAIR* - Encerrar conversa`);
+        return;
+      }
+    } else if (resultadoIA.intencao === 'consultar_semana') {
+      const hoje = new Date();
+      const em7dias = new Date();
+      em7dias.setDate(hoje.getDate() + 7);
+      
+      const filtros = {
+        data_inicio: hojeISO(),
+        data_fim: em7dias.toISOString().slice(0, 10),
+        limite: 50
+      };
+      
+      const { ok, data } = await chamarApiAgendamentos(cpfSalvo, filtros);
+      if (ok) {
+        const lista = data.data?.agendamentos || [];
+        const msg = montarMensagemAgendamentos('PRÓXIMOS 7 DIAS', lista);
+        await client.sendText(numero, msg + `\n\n══════════════════════\n*OPÇÕES:*\n*0* - Menu principal\n*SAIR* - Encerrar conversa`);
+        return;
+      }
+    } else if (resultadoIA.intencao === 'calcular_faturamento') {
+      // Calcular faturamento
+      const hoje = new Date();
+      const em7dias = new Date();
+      em7dias.setDate(hoje.getDate() + 7);
+      
+      const filtros = {
+        data_inicio: resultadoIA.filtros?.data_inicio || hojeISO(),
+        data_fim: resultadoIA.filtros?.data_fim || em7dias.toISOString().slice(0, 10),
+        limite: 200
+      };
+      
+      const { ok, data } = await chamarApiAgendamentos(cpfSalvo, filtros);
+      if (ok && data.data?.agendamentos) {
+        const lista = data.data.agendamentos;
+        const total = lista.reduce((sum, ag) => sum + (Number(ag.valor) || 0), 0);
+        const confirmados = lista.filter(ag => ag.status === 'confirmado');
+        const totalConfirmado = confirmados.reduce((sum, ag) => sum + (Number(ag.valor) || 0), 0);
+        
+        await client.sendText(
+          numero,
+          `*💰 FATURAMENTO*\n\n` +
+          `Período: ${formatarDataPtBr(filtros.data_inicio)} até ${formatarDataPtBr(filtros.data_fim)}\n\n` +
+          `══════════════════════\n` +
+          `Total de agendamentos: *${lista.length}*\n` +
+          `Confirmados: *${confirmados.length}*\n\n` +
+          `💵 *Valor total:* R$ ${total.toFixed(2)}\n` +
+          `✅ *Confirmado:* R$ ${totalConfirmado.toFixed(2)}\n` +
+          `⏳ *Pendente:* R$ ${(total - totalConfirmado).toFixed(2)}\n\n` +
+          `══════════════════════\n*OPÇÕES:*\n*0* - Menu principal\n*SAIR* - Encerrar conversa`
+        );
+        return;
+      }
+    } else if (resultadoIA.intencao === 'contar_clientes') {
+      const filtros = {
+        data_inicio: resultadoIA.filtros?.data_inicio || hojeISO(),
+        data_fim: resultadoIA.filtros?.data_fim || hojeISO(),
+        limite: 200
+      };
+      
+      const { ok, data } = await chamarApiAgendamentos(cpfSalvo, filtros);
+      if (ok && data.data?.agendamentos) {
+        const lista = data.data.agendamentos;
+        await client.sendText(
+          numero,
+          `*📊 ESTATÍSTICAS*\n\n` +
+          `Você tem *${lista.length}* agendamento${lista.length !== 1 ? 's' : ''} no período solicitado.\n\n` +
+          `══════════════════════\n*OPÇÕES:*\n*0* - Menu principal\n*1* - Ver detalhes dos agendamentos\n*SAIR* - Encerrar conversa`
+        );
+        return;
+      }
+    }
+    
+    // ====================================
+    // 8) COMANDO NÃO RECONHECIDO (após tentar IA)
     // ====================================
     
     const desculpas = [
@@ -913,6 +1090,7 @@ function startBot(client) {
     await client.sendText(
       numero,
       `*${desculpa}* 🤔\n\n` +
+      `Tentei entender sua pergunta, mas preciso de mais clareza.\n\n` +
       `══════════════════════\n` +
       `*OPÇÕES DISPONÍVEIS:*\n\n` +
       `*1* - Agendamentos de hoje\n` +
@@ -925,6 +1103,10 @@ function startBot(client) {
       `*CPF* - Trocar profissional\n` +
       `*SAIR* - Encerrar conversa\n\n` +
       `══════════════════════\n` +
+      `💡 *Dica:* Tente perguntas como:\n` +
+      `• "Tenho cliente hoje?"\n` +
+      `• "Quanto vou ganhar essa semana?"\n` +
+      `• "Quem vem amanhã de tarde?"\n\n` +
       `Digite o número ou comando desejado.`
     );
   });
