@@ -20,9 +20,16 @@ const API_BASE = 'https://salao.develoi.com/api/';
 // Porta para o webhook HTTP (PHP vai chamar aqui)
 const WEBHOOK_PORT = 80;
 
+// Números de atendimento humano
+const NUMERO_SUPORTE = '5515992675429@c.us';  // Eduardo Eloi
+const NUMERO_VENDAS = '5515991345333@c.us';   // Karen Gomes
+
 // Mapa em memória: numeroWhats -> CPF
 // Exemplo: '5511999998888@c.us' -> '12345678900'
 const cpfPorNumero = {};
+
+// Sessões de atendimento ativas: numeroCliente -> { tipo, atendente, iniciado }
+const sessoesAtendimento = {};
 
 // Cliente global do WPPConnect
 let clientGlobal = null;
@@ -66,6 +73,14 @@ function amanhaISO() {
   const d = new Date();
   d.setDate(d.getDate() + 1);
   return d.toISOString().slice(0, 10);
+}
+
+// Saudação baseada no horário
+function saudacaoPorHorario() {
+  const hora = new Date().getHours();
+  if (hora >= 6 && hora < 12) return 'Bom dia';
+  if (hora >= 12 && hora < 18) return 'Boa tarde';
+  return 'Boa noite';
 }
 
 // Formatar data para português (ex: "07 de maio de 2026")
@@ -219,13 +234,212 @@ function startBot(client) {
     console.log(`   Conteúdo: ${textoBruto}`);
 
     // ====================================
-    // 1) PROFISSIONAL VINCULANDO CPF
+    // 0) VERIFICAR SE ESTÁ EM ATENDIMENTO HUMANO
+    // ====================================
+    
+    const sessao = sessoesAtendimento[numero];
+    
+    // Se é o atendente encerrando
+    if ((numero === NUMERO_SUPORTE || numero === NUMERO_VENDAS) && texto === 'sair_bot') {
+      // Encontrar cliente sendo atendido por este atendente
+      const clienteAtendido = Object.keys(sessoesAtendimento).find(
+        num => sessoesAtendimento[num].atendente === numero && sessoesAtendimento[num].iniciado
+      );
+      
+      if (clienteAtendido) {
+        delete sessoesAtendimento[clienteAtendido];
+        await client.sendText(
+          clienteAtendido,
+          `*ATENDIMENTO ENCERRADO*\n\n` +
+          `Obrigado por entrar em contato! 😊\n\n` +
+          `Se precisar de algo mais, estamos à disposição.\n\n` +
+          `Digite *0* para voltar ao menu principal.`
+        );
+        await client.sendText(numero, '✅ Atendimento encerrado. Cliente foi notificado.');
+        console.log(`   ✅ Atendimento encerrado por ${numero}`);
+      } else {
+        await client.sendText(numero, '⚠️ Nenhum atendimento ativo encontrado.');
+      }
+      return;
+    }
+    
+    // Se cliente está em atendimento ativo, redirecionar para atendente
+    if (sessao && sessao.iniciado) {
+      console.log(`   🔄 Redirecionando mensagem para ${sessao.tipo}`);
+      await client.sendText(
+        sessao.atendente,
+        `*[CLIENTE]:* ${textoBruto}`
+      );
+      return;
+    }
+    
+    // Se é atendente respondendo a solicitação pendente
+    if ((numero === NUMERO_SUPORTE || numero === NUMERO_VENDAS) && texto === '1') {
+      // Encontrar cliente aguardando este atendente
+      const clienteAguardando = Object.keys(sessoesAtendimento).find(
+        num => sessoesAtendimento[num].atendente === numero && !sessoesAtendimento[num].iniciado
+      );
+      
+      if (clienteAguardando) {
+        sessoesAtendimento[clienteAguardando].iniciado = true;
+        const tipoAtend = sessoesAtendimento[clienteAguardando].tipo;
+        const nomeAtendente = numero === NUMERO_SUPORTE ? 'Eduardo' : 'Karen';
+        
+        await client.sendText(
+          clienteAguardando,
+          `*ATENDIMENTO INICIADO* ✅\n\n` +
+          `Olá! Sou *${nomeAtendente}* e vou te atender agora.\n\n` +
+          `Fique à vontade para fazer suas perguntas! 😊`
+        );
+        await client.sendText(
+          numero,
+          `✅ *Atendimento aceito!*\n\n` +
+          `Você está conectado(a) ao cliente ${clienteAguardando}\n\n` +
+          `Para encerrar, digite: *SAIR_BOT*`
+        );
+        console.log(`   ✅ Atendimento ${tipoAtend} iniciado por ${nomeAtendente}`);
+      } else {
+        await client.sendText(numero, '⚠️ Nenhuma solicitação pendente.');
+      }
+      return;
+    }
+    
+    // Se é atendente recusando
+    if ((numero === NUMERO_SUPORTE || numero === NUMERO_VENDAS) && texto.toLowerCase() === 'recusa') {
+      const clienteAguardando = Object.keys(sessoesAtendimento).find(
+        num => sessoesAtendimento[num].atendente === numero && !sessoesAtendimento[num].iniciado
+      );
+      
+      if (clienteAguardando) {
+        delete sessoesAtendimento[clienteAguardando];
+        await client.sendText(
+          clienteAguardando,
+          `*ATENDIMENTO INDISPONÍVEL*\n\n` +
+          `Desculpe, não conseguimos atender no momento.\n\n` +
+          `Por favor, tente novamente mais tarde.\n\n` +
+          `Digite *0* para voltar ao menu.`
+        );
+        await client.sendText(numero, '❌ Solicitação recusada. Cliente foi notificado.');
+      }
+      return;
+    }
+    
+    // Se é atendente enviando mensagem para cliente
+    if (numero === NUMERO_SUPORTE || numero === NUMERO_VENDAS) {
+      const clienteAtendido = Object.keys(sessoesAtendimento).find(
+        num => sessoesAtendimento[num].atendente === numero && sessoesAtendimento[num].iniciado
+      );
+      
+      if (clienteAtendido) {
+        await client.sendText(clienteAtendido, textoBruto);
+        return;
+      }
+    }
+
+    // ====================================
+    // 1) MENU INICIAL (CLIENTE/SUPORTE/VENDAS)
+    // ====================================
+    
+    // Se não tem CPF vinculado E não escolheu opção ainda, mostrar menu inicial
+    if (!cpfPorNumero[numero] && !['1', '2', '3'].includes(texto)) {
+      const saudacao = saudacaoPorHorario();
+      await client.sendText(
+        numero,
+        `*${saudacao}! Seja bem-vindo(a)!* 👋\n\n` +
+        `Sou o assistente virtual do *Salão Develoi*.\n\n` +
+        `══════════════════════\n` +
+        `*COMO PODEMOS AJUDAR?*\n\n` +
+        `*1* - Sou cliente (consultar agendamentos)\n` +
+        `*2* - Suporte técnico\n` +
+        `*3* - Falar com vendas\n\n` +
+        `══════════════════════\n` +
+        `Digite o número da opção desejada.`
+      );
+      return;
+    }
+    
+    // Opção 2: SUPORTE
+    if (texto === '2' && !cpfPorNumero[numero]) {
+      sessoesAtendimento[numero] = {
+        tipo: 'suporte',
+        atendente: NUMERO_SUPORTE,
+        iniciado: false
+      };
+      
+      await client.sendText(
+        numero,
+        `*SUPORTE TÉCNICO* 🛠️\n\n` +
+        `Conectando você com nossa equipe...\n\n` +
+        `Aguarde um momento, por favor.`
+      );
+      
+      await client.sendText(
+        NUMERO_SUPORTE,
+        `🔔 *NOVA SOLICITAÇÃO DE SUPORTE*\n\n` +
+        `Cliente: ${numero}\n\n` +
+        `══════════════════════\n` +
+        `*ACEITAR ATENDIMENTO?*\n\n` +
+        `*1* - Aceitar\n` +
+        `*RECUSA* - Recusar\n\n` +
+        `══════════════════════`
+      );
+      
+      console.log(`   📞 Solicitação de suporte de ${numero}`);
+      return;
+    }
+    
+    // Opção 3: VENDAS
+    if (texto === '3' && !cpfPorNumero[numero]) {
+      sessoesAtendimento[numero] = {
+        tipo: 'vendas',
+        atendente: NUMERO_VENDAS,
+        iniciado: false
+      };
+      
+      await client.sendText(
+        numero,
+        `*VENDAS* 💼\n\n` +
+        `Conectando você com nossa equipe...\n\n` +
+        `Aguarde um momento, por favor.`
+      );
+      
+      await client.sendText(
+        NUMERO_VENDAS,
+        `🔔 *NOVA SOLICITAÇÃO DE VENDAS*\n\n` +
+        `Cliente: ${numero}\n\n` +
+        `══════════════════════\n` +
+        `*ACEITAR ATENDIMENTO?*\n\n` +
+        `*1* - Aceitar\n` +
+        `*RECUSA* - Recusar\n\n` +
+        `══════════════════════`
+      );
+      
+      console.log(`   💼 Solicitação de vendas de ${numero}`);
+      return;
+    }
+
+    // ====================================
+    // 2) PROFISSIONAL VINCULANDO CPF (Opção 1)
     // ====================================
     
     const cpfNumeros = soNumeros(textoBruto);
     const pareceCPF = cpfNumeros.length === 11;
 
-    // Permitir trocar CPF a qualquer momento
+    // Permitir trocar CPF a qualquer momento (ou se escolheu opção 1)
+    if (texto === '1' && !cpfPorNumero[numero]) {
+      await client.sendText(
+        numero,
+        `*ÁREA DO CLIENTE* 👤\n\n` +
+        `Para consultar seus agendamentos, preciso do seu CPF.\n\n` +
+        `══════════════════════\n` +
+        `*ENVIE SEU CPF:*\n\n` +
+        `Apenas números (11 dígitos)\n` +
+        `Exemplo: 12345678900\n\n` +
+        `══════════════════════`
+      );
+      return;
+    }
+    
     if (texto.startsWith('cpf') || texto.startsWith('trocar cpf') || texto.startsWith('mudar cpf') || (pareceCPF && !cpfPorNumero[numero])) {
       const cpfLimpo = cpfNumeros;
 
@@ -308,25 +522,18 @@ function startBot(client) {
     const cpfSalvo = cpfPorNumero[numero];
     
     if (!cpfSalvo) {
-      const saudacoes = [
-        'Olá! Seja bem-vindo(a).',
-        'Oi! Como vai? Prazer em atendê-lo(a).',
-        'Olá! Que bom ter você aqui.',
-        'Oi! Seja bem-vindo(a) ao nosso sistema.'
-      ];
-      const saudacao = saudacoes[Math.floor(Math.random() * saudacoes.length)];
-
+      // Se chegou aqui sem CPF, redirecionar para menu inicial
+      const saudacao = saudacaoPorHorario();
       await client.sendText(
         numero,
-        `*${saudacao}*\n\n` +
-        `Sou o assistente virtual do *Salão Develoi*.\n\n` +
-        `Este canal é exclusivo para profissionais do salão.\n\n` +
-        `──────────────────\n` +
-        `*PARA COMEÇAR:*\n\n` +
-        `Por favor, me envie seu *CPF* (apenas números)\n\n` +
-        `Exemplo: 12345678900\n\n` +
-        `──────────────────\n` +
-        `_Clientes devem usar o sistema web para fazer agendamentos._`
+        `*${saudacao}!* 👋\n\n` +
+        `══════════════════════\n` +
+        `*COMO PODEMOS AJUDAR?*\n\n` +
+        `*1* - Sou cliente (consultar agendamentos)\n` +
+        `*2* - Suporte técnico\n` +
+        `*3* - Falar com vendas\n\n` +
+        `══════════════════════\n` +
+        `Digite o número da opção.`
       );
       return;
     }
@@ -398,7 +605,9 @@ function startBot(client) {
         `*0* - Ver este menu\n\n` +
         `══════════════════════\n` +
         `*OUTRAS OPÇÕES:*\n` +
-        `Digite *CPF* para trocar de profissional\n\n` +
+        `*CPF* - Trocar profissional\n` +
+        `*SUPORTE* - Falar com suporte\n` +
+        `*VENDAS* - Falar com vendas\n\n` +
         `*NOTIFICAÇÕES AUTOMÁTICAS:*\n` +
         `Você recebe avisos quando:\n` +
         `• Novo agendamento criado\n` +
@@ -562,7 +771,69 @@ function startBot(client) {
     }
 
     // ====================================
-    // 5) COMANDO NÃO RECONHECIDO
+    // 5) COMANDOS ESPECIAIS: SUPORTE E VENDAS
+    // ====================================
+    
+    if (texto === 'suporte' || texto.includes('falar com suporte')) {
+      sessoesAtendimento[numero] = {
+        tipo: 'suporte',
+        atendente: NUMERO_SUPORTE,
+        iniciado: false
+      };
+      
+      await client.sendText(
+        numero,
+        `*SUPORTE TÉCNICO* 🛠️\n\n` +
+        `Conectando você com nossa equipe...\n\n` +
+        `Aguarde um momento, por favor.`
+      );
+      
+      await client.sendText(
+        NUMERO_SUPORTE,
+        `🔔 *NOVA SOLICITAÇÃO DE SUPORTE*\n\n` +
+        `Cliente: ${numero}\n\n` +
+        `══════════════════════\n` +
+        `*ACEITAR ATENDIMENTO?*\n\n` +
+        `*1* - Aceitar\n` +
+        `*RECUSA* - Recusar\n\n` +
+        `══════════════════════`
+      );
+      
+      console.log(`   📞 Solicitação de suporte de ${numero}`);
+      return;
+    }
+    
+    if (texto === 'vendas' || texto.includes('falar com vendas')) {
+      sessoesAtendimento[numero] = {
+        tipo: 'vendas',
+        atendente: NUMERO_VENDAS,
+        iniciado: false
+      };
+      
+      await client.sendText(
+        numero,
+        `*VENDAS* 💼\n\n` +
+        `Conectando você com nossa equipe...\n\n` +
+        `Aguarde um momento, por favor.`
+      );
+      
+      await client.sendText(
+        NUMERO_VENDAS,
+        `🔔 *NOVA SOLICITAÇÃO DE VENDAS*\n\n` +
+        `Cliente: ${numero}\n\n` +
+        `══════════════════════\n` +
+        `*ACEITAR ATENDIMENTO?*\n\n` +
+        `*1* - Aceitar\n` +
+        `*RECUSA* - Recusar\n\n` +
+        `══════════════════════`
+      );
+      
+      console.log(`   💼 Solicitação de vendas de ${numero}`);
+      return;
+    }
+
+    // ====================================
+    // 6) COMANDO NÃO RECONHECIDO
     // ====================================
     
     const desculpas = [
@@ -583,6 +854,8 @@ function startBot(client) {
       `*3* - Próximos 7 dias\n` +
       `*4* - Todos os agendamentos\n` +
       `*0* - Ver menu completo\n\n` +
+      `*SUPORTE* - Falar com suporte\n` +
+      `*VENDAS* - Falar com vendas\n` +
       `*CPF* - Trocar profissional\n\n` +
       `──────────────────\n` +
       `Digite o número ou comando.`
