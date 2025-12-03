@@ -273,7 +273,7 @@ function startBot(client) {
       return;
     }
     
-    // Se é atendente respondendo a solicitação pendente
+    // Se é atendente (Eduardo ou Karen) e digitou "1", verificar se tem solicitação pendente
     if ((numero === NUMERO_SUPORTE || numero === NUMERO_VENDAS) && texto === '1') {
       // Encontrar cliente aguardando este atendente
       const clienteAguardando = Object.keys(sessoesAtendimento).find(
@@ -281,6 +281,7 @@ function startBot(client) {
       );
       
       if (clienteAguardando) {
+        // TEM cliente aguardando - aceitar atendimento
         sessoesAtendimento[clienteAguardando].iniciado = true;
         const tipoAtend = sessoesAtendimento[clienteAguardando].tipo;
         const nomeAtendente = numero === NUMERO_SUPORTE ? 'Eduardo' : 'Karen';
@@ -298,10 +299,10 @@ function startBot(client) {
           `Para encerrar, digite: *SAIR_BOT*`
         );
         console.log(`   ✅ Atendimento ${tipoAtend} iniciado por ${nomeAtendente}`);
-      } else {
-        await client.sendText(numero, '⚠️ Nenhuma solicitação pendente.');
+        return;
       }
-      return;
+      // NÃO tem cliente aguardando - atendente pode estar usando bot normalmente
+      // Continua processamento normal (não retorna aqui)
     }
     
     // Se é atendente recusando
