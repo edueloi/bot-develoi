@@ -991,14 +991,26 @@ app.post('/webhook/novo-agendamento', async (req, res) => {
       `https://salao.develoi.com`;
 
     // Envia notificação para o WhatsApp do profissional
-    await clientGlobal.sendText(numeroWhats, msg);
-
-    console.log(`   ✅ Notificação enviada para ${numeroWhats}`);
-    
-    return res.json({ 
-      success: true,
-      message: 'Notificação enviada com sucesso'
-    });
+    try {
+      await clientGlobal.sendText(numeroWhats, msg);
+      console.log(`   ✅ Notificação enviada para ${numeroWhats}`);
+      
+      return res.json({ 
+        success: true,
+        message: 'Notificação enviada com sucesso'
+      });
+    } catch (sendError) {
+      // Erro comum: "No LID for user" - número não está nos contatos
+      if (sendError.message && sendError.message.includes('No LID')) {
+        console.log(`   ⚠️ Número ${numeroWhats} não está nos contatos do WhatsApp`);
+        return res.status(400).json({ 
+          success: false,
+          message: 'Número não está nos contatos do WhatsApp. Adicione o contato primeiro.',
+          error: 'NO_LID'
+        });
+      }
+      throw sendError; // Re-lança outros erros
+    }
     
   } catch (err) {
     console.error('   ❌ Erro no webhook:', err);
@@ -1080,14 +1092,26 @@ app.post('/webhook/agendamento-confirmado', async (req, res) => {
       `Até logo! 😊`;
 
     // Envia mensagem de confirmação para o WhatsApp do CLIENTE
-    await clientGlobal.sendText(numeroWhats, msg);
-
-    console.log(`   ✅ Confirmação enviada para cliente ${numeroWhats}`);
-    
-    return res.json({ 
-      success: true,
-      message: 'Confirmação enviada ao cliente com sucesso'
-    });
+    try {
+      await clientGlobal.sendText(numeroWhats, msg);
+      console.log(`   ✅ Confirmação enviada para cliente ${numeroWhats}`);
+      
+      return res.json({ 
+        success: true,
+        message: 'Confirmação enviada ao cliente com sucesso'
+      });
+    } catch (sendError) {
+      // Erro comum: "No LID for user" - número não está nos contatos
+      if (sendError.message && sendError.message.includes('No LID')) {
+        console.log(`   ⚠️ Número ${numeroWhats} não está nos contatos do WhatsApp`);
+        return res.status(400).json({ 
+          success: false,
+          message: 'Número do cliente não está nos contatos. Adicione o contato primeiro.',
+          error: 'NO_LID'
+        });
+      }
+      throw sendError; // Re-lança outros erros
+    }
     
   } catch (err) {
     console.error('   ❌ Erro no webhook de confirmação:', err);
@@ -1181,7 +1205,11 @@ app.post('/webhook/lembrete-agendamento', async (req, res) => {
           console.log(`   ✅ Lembrete enviado para CLIENTE ${numeroCliente}`);
           enviados++;
         } catch (err) {
-          console.error(`   ❌ Erro ao enviar para cliente:`, err.message);
+          if (err.message && err.message.includes('No LID')) {
+            console.log(`   ⚠️ CLIENTE ${numeroCliente} não está nos contatos`);
+          } else {
+            console.error(`   ❌ Erro ao enviar para cliente:`, err.message);
+          }
         }
       }
     }
@@ -1213,7 +1241,11 @@ app.post('/webhook/lembrete-agendamento', async (req, res) => {
           console.log(`   ✅ Lembrete enviado para PROFISSIONAL ${numeroProfissional}`);
           enviados++;
         } catch (err) {
-          console.error(`   ❌ Erro ao enviar para profissional:`, err.message);
+          if (err.message && err.message.includes('No LID')) {
+            console.log(`   ⚠️ PROFISSIONAL ${numeroProfissional} não está nos contatos`);
+          } else {
+            console.error(`   ❌ Erro ao enviar para profissional:`, err.message);
+          }
         }
       }
     }
