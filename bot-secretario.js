@@ -146,8 +146,11 @@ function amanhaISO() {
 // Saudação baseada no horário
 function saudacaoPorHorario() {
   const hora = new Date().getHours();
-  if (hora >= 6 && hora < 12) return 'Bom dia';
-  if (hora >= 12 && hora < 18) return 'Boa tarde';
+  // 5h às 11h59 = Bom dia
+  if (hora >= 5 && hora < 12) return 'Bom dia';
+  // 12h às 18h = Boa tarde
+  if (hora >= 12 && hora <= 18) return 'Boa tarde';
+  // 18h01 às 4h59 = Boa noite
   return 'Boa noite';
 }
 
