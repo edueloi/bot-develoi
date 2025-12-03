@@ -197,14 +197,15 @@ function formatarDataPtBr(dataISO) {
 }
 
 // Criar lembrete personalizado
-function criarLembrete(numero, mensagem, dataHora) {
+function criarLembrete(numero, mensagem, dataHora, criadoPor = null) {
   const lembrete = {
     id: proximoIdLembrete++,
-    numero: numero,
+    numero: numero, // Para quem enviar
     mensagem: mensagem,
     dataHora: dataHora,
     enviado: false,
-    criadoEm: new Date()
+    criadoEm: new Date(),
+    criadoPor: criadoPor || numero // Quem criou (default: mesma pessoa)
   };
   
   lembretes.push(lembrete);
@@ -888,13 +889,15 @@ function startBot(client) {
         `*2* - Agendamentos de amanhã\n` +
         `*3* - Próximos 7 dias\n` +
         `*4* - Todos os agendamentos\n` +
+        `*5* - Criar lembrete para cliente\n` +
         `*0* - Ver este menu\n\n` +
         `══════════════════════\n` +
         `*OUTRAS OPÇÕES:*\n` +
         `*CPF* - Trocar profissional\n` +
         `*SUPORTE* - Falar com suporte\n` +
         `*VENDAS* - Falar com vendas\n` +
-        `*LEMBRETES* - Ver lembretes ativos\n\n` +
+        `*LEMBRETES* - Ver lembretes ativos\n` +
+        `*SAIR DO CPF* - Voltar ao menu inicial\n\n` +
         `*NOTIFICAÇÕES AUTOMÁTICAS:*\n` +
         `Você recebe avisos quando:\n` +
         `• Novo agendamento criado\n` +
@@ -911,7 +914,271 @@ function startBot(client) {
     }
 
     // ====================================
-    // 4) COMANDOS DE CONSULTA
+    // 4) CRIAR LEMBRETE PARA CLIENTE (Opção 5)
+    // ====================================
+    
+    if (
+      texto === '5' ||
+      texto.toLowerCase().includes('criar lembrete para cliente') ||
+      texto.toLowerCase().includes('lembrar cliente')
+    ) {
+      console.log('   🔔 Iniciando criação de lembrete para cliente...');
+      
+      await client.sendText(numero, '_Buscando seus agendamentos futuros..._');
+      
+      // Buscar agendamentos futuros do profissional
+      const dataHoje = new Date();
+      dataHoje.setHours(0, 0, 0, 0);
+      
+      const filtros = {
+        data_inicio: dataHoje.toISOString().split('T')[0],
+        data_fim: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0] // próximos 30 dias
+      };
+
+      const { ok, data } = await chamarApiAgendamentos(cpfSalvo, filtros);
+
+      if (!ok) {
+        await client.sendText(
+          numero,
+          `*ERRO*\n\n` +
+          `Não foi possível buscar os agendamentos.\n\n` +
+          `Digite *0* para voltar ao menu.`
+        );
+        return;
+      }
+
+      const lista = data.data?.agendamentos || [];
+      
+      if (lista.length === 0) {
+        await client.sendText(
+          numero,
+          `*NENHUM AGENDAMENTO FUTURO*\n\n` +
+          `Você não tem agendamentos nos próximos 30 dias.\n\n` +
+          `══════════════════════\n` +
+          `*OPÇÕES:*\n` +
+          `*0* - Menu principal\n` +
+          `*SAIR* - Encerrar conversa`
+        );
+        return;
+      }
+
+      // Limitar a 10 agendamentos
+      const listaLimitada = lista.slice(0, 10);
+      
+      // Criar mensagem com lista numerada
+      let mensagem = `*CRIAR LEMBRETE PARA CLIENTE*\n\n`;
+      mensagem += `Escolha o agendamento que deseja criar um lembrete:\n\n`;
+      
+      listaLimitada.forEach((ag, index) => {
+        const dataFormatada = formatarDataPtBr(ag.data);
+        const clienteNome = ag.cliente_nome || 'Cliente sem nome';
+        const servico = ag.servico || 'Serviço não especificado';
+        
+        mensagem += `*${index + 1}* - ${dataFormatada} às ${ag.horario}\n`;
+        mensagem += `   Cliente: ${clienteNome}\n`;
+        mensagem += `   Serviço: ${servico}\n\n`;
+      });
+      
+      mensagem += `══════════════════════\n`;
+      mensagem += `*Digite o número do agendamento* (1-${listaLimitada.length})\n`;
+      mensagem += `ou *0* para cancelar.`;
+      
+      await client.sendText(numero, mensagem);
+      
+      // Criar sessão para acompanhar o fluxo
+      sessoesCriacaoLembreteCliente[numero] = {
+        etapa: 'escolher_agendamento',
+        agendamentos: listaLimitada,
+        agendamentoSelecionado: null
+      };
+      
+      console.log('   ✅ Lista de agendamentos enviada');
+      return;
+    }
+
+    // ====================================
+    // 4.1) PROCESSAR SESSÃO DE CRIAÇÃO DE LEMBRETE PARA CLIENTE
+    // ====================================
+    
+    const sessaoLembreteCliente = sessoesCriacaoLembreteCliente[numero];
+    
+    if (sessaoLembreteCliente) {
+      // Permitir cancelamento a qualquer momento
+      if (texto === '0' || texto.toLowerCase() === 'cancelar') {
+        delete sessoesCriacaoLembreteCliente[numero];
+        await client.sendText(
+          numero,
+          `*CANCELADO*\n\n` +
+          `Criação de lembrete cancelada.\n\n` +
+          `══════════════════════\n` +
+          `*OPÇÕES:*\n` +
+          `*0* - Menu principal\n` +
+          `*SAIR* - Encerrar conversa`
+        );
+        return;
+      }
+      
+      // ETAPA 1: Escolher agendamento
+      if (sessaoLembreteCliente.etapa === 'escolher_agendamento') {
+        const numeroEscolhido = parseInt(texto);
+        
+        if (isNaN(numeroEscolhido) || numeroEscolhido < 1 || numeroEscolhido > sessaoLembreteCliente.agendamentos.length) {
+          await client.sendText(
+            numero,
+            `*OPÇÃO INVÁLIDA*\n\n` +
+            `Digite um número entre 1 e ${sessaoLembreteCliente.agendamentos.length}\n` +
+            `ou *0* para cancelar.`
+          );
+          return;
+        }
+        
+        const agendamentoSelecionado = sessaoLembreteCliente.agendamentos[numeroEscolhido - 1];
+        sessaoLembreteCliente.agendamentoSelecionado = agendamentoSelecionado;
+        sessaoLembreteCliente.etapa = 'definir_quando';
+        
+        const dataFormatada = formatarDataPtBr(agendamentoSelecionado.data);
+        
+        await client.sendText(
+          numero,
+          `*AGENDAMENTO SELECIONADO*\n\n` +
+          `📅 Data: ${dataFormatada}\n` +
+          `⏰ Horário: ${agendamentoSelecionado.horario}\n` +
+          `👤 Cliente: ${agendamentoSelecionado.cliente_nome}\n` +
+          `💈 Serviço: ${agendamentoSelecionado.servico}\n\n` +
+          `══════════════════════\n` +
+          `*QUANDO AVISAR O CLIENTE?*\n\n` +
+          `Digite quando enviar o lembrete:\n\n` +
+          `Exemplos:\n` +
+          `• "hoje 15h"\n` +
+          `• "amanhã 10h"\n` +
+          `• "daqui 2 horas"\n` +
+          `• "1 hora antes"\n\n` +
+          `ou *0* para cancelar.`
+        );
+        
+        console.log(`   ✅ Agendamento #${numeroEscolhido} selecionado`);
+        return;
+      }
+      
+      // ETAPA 2: Definir quando enviar
+      if (sessaoLembreteCliente.etapa === 'definir_quando') {
+        console.log(`   🤖 Processando comando de quando enviar: "${texto}"`);
+        
+        await client.sendText(numero, '_Processando..._');
+        
+        const ag = sessaoLembreteCliente.agendamentoSelecionado;
+        const dataAgendamento = ag.data;
+        const horarioAgendamento = ag.horario;
+        
+        // Usar IA para processar o "quando"
+        const resultado = await processarQuandoLembreteCliente(
+          texto,
+          dataAgendamento,
+          horarioAgendamento
+        );
+        
+        if (!resultado.valido) {
+          await client.sendText(
+            numero,
+            `*NÃO ENTENDI*\n\n` +
+            `${resultado.mensagem_erro || 'Por favor, tente novamente.'}\n\n` +
+            `Exemplos válidos:\n` +
+            `• "hoje 15h"\n` +
+            `• "amanhã 10h"\n` +
+            `• "daqui 2 horas"\n` +
+            `• "1 hora antes"\n\n` +
+            `ou *0* para cancelar.`
+          );
+          return;
+        }
+        
+        const dataHoraLembrete = new Date(resultado.dataHora);
+        const agora = new Date();
+        
+        // Validar se a data é futura
+        if (dataHoraLembrete <= agora) {
+          await client.sendText(
+            numero,
+            `*DATA/HORA NO PASSADO*\n\n` +
+            `O horário "${resultado.quando_texto}" já passou.\n\n` +
+            `Digite um horário futuro ou *0* para cancelar.`
+          );
+          return;
+        }
+        
+        // Verificar se cliente tem telefone
+        if (!ag.cliente_telefone) {
+          await client.sendText(
+            numero,
+            `*ERRO: CLIENTE SEM TELEFONE*\n\n` +
+            `O cliente ${ag.cliente_nome} não tem número de telefone cadastrado.\n\n` +
+            `Não é possível criar o lembrete.\n\n` +
+            `══════════════════════\n` +
+            `*OPÇÕES:*\n` +
+            `*5* - Tentar outro agendamento\n` +
+            `*0* - Menu principal`
+          );
+          delete sessoesCriacaoLembreteCliente[numero];
+          return;
+        }
+        
+        // Formatar telefone do cliente para WhatsApp
+        const telefoneCliente = ag.cliente_telefone.replace(/\D/g, '');
+        const whatsappCliente = telefoneCliente + '@c.us';
+        
+        // Criar mensagem do lembrete
+        const dataAgFormatada = formatarDataPtBr(ag.data);
+        const mensagemLembrete = 
+          `🔔 *LEMBRETE DE AGENDAMENTO*\n\n` +
+          `Olá, ${ag.cliente_nome}!\n\n` +
+          `Você tem um agendamento marcado:\n\n` +
+          `📅 *Data:* ${dataAgFormatada}\n` +
+          `⏰ *Horário:* ${ag.horario}\n` +
+          `💈 *Serviço:* ${ag.servico}\n` +
+          `📍 *Local:* ${ag.estabelecimento || 'Salão Develoi'}\n\n` +
+          `══════════════════════\n` +
+          `Qualquer dúvida, entre em contato:\n` +
+          `📱 ${formatarTelefoneExibicao(ag.profissional_telefone || '15992675429')}`;
+        
+        // Criar lembrete (profissional cria lembrete para cliente)
+        const lembrete = criarLembrete(
+          whatsappCliente,     // Para quem enviar (cliente)
+          mensagemLembrete,
+          dataHoraLembrete,
+          numero               // Quem criou (profissional)
+        );
+        
+        // Limpar sessão
+        delete sessoesCriacaoLembreteCliente[numero];
+        
+        // Confirmar criação
+        const dataHoraFormatada = formatarDataPtBr(resultado.dataHora.split('T')[0]) + 
+                                  ' às ' + 
+                                  dataHoraLembrete.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+        
+        await client.sendText(
+          numero,
+          `✅ *LEMBRETE CRIADO*\n\n` +
+          `O cliente receberá o lembrete:\n\n` +
+          `👤 *Cliente:* ${ag.cliente_nome}\n` +
+          `📱 *Telefone:* ${formatarTelefoneExibicao(ag.cliente_telefone)}\n` +
+          `📅 *Agendamento:* ${dataAgFormatada} às ${ag.horario}\n` +
+          `🔔 *Enviar em:* ${dataHoraFormatada}\n\n` +
+          `ID do lembrete: #${lembrete.id}\n\n` +
+          `══════════════════════\n` +
+          `*OPÇÕES:*\n` +
+          `*LEMBRETES* - Ver todos os lembretes\n` +
+          `*5* - Criar outro lembrete\n` +
+          `*0* - Menu principal`
+        );
+        
+        console.log(`   ✅ Lembrete #${lembrete.id} criado para cliente ${ag.cliente_nome}`);
+        return;
+      }
+    }
+
+    // ====================================
+    // 5) COMANDOS DE CONSULTA
     // ====================================
 
     // Agendamentos de HOJE (opção 1)
@@ -1246,46 +1513,82 @@ function startBot(client) {
     // Comando para listar lembretes ativos
     if (texto === 'lembretes' || texto === 'meus lembretes' || texto === 'ver lembretes') {
       const meusLembretes = lembretes.filter(l => l.numero === numero && !l.enviado);
+      const lembretesParaClientes = lembretes.filter(l => {
+        // Lembretes para clientes são os que foram criados por mim (numero) mas enviados para outros
+        return l.criadoPor === numero && l.numero !== numero && !l.enviado;
+      });
       
-      if (meusLembretes.length === 0) {
+      const total = meusLembretes.length + lembretesParaClientes.length;
+      
+      if (total === 0) {
         await client.sendText(
           numero,
           `*MEUS LEMBRETES* 📋\n\n` +
           `Você não tem lembretes ativos.\n\n` +
           `══════════════════════\n` +
-          `*CRIAR LEMBRETE:*\n\n` +
-          `Digite frases como:\n` +
+          `*CRIAR LEMBRETES:*\n\n` +
+          `*Pessoal (para você):*\n` +
           `• "lembre-me daqui 30 minutos"\n` +
-          `• "lembrete hoje às 15h"\n` +
-          `• "me avise amanhã às 9h"\n\n` +
+          `• "lembrete hoje às 15h"\n\n` +
+          `*Para Clientes:*\n` +
+          `• Digite *5* no menu\n\n` +
           `*0* - Menu principal`
         );
         return;
       }
       
       let msg = `*MEUS LEMBRETES ATIVOS* ⏰\n\n`;
-      msg += `Você tem ${meusLembretes.length} lembrete(s):\n\n`;
-      msg += `══════════════════════\n\n`;
+      msg += `Total: ${total} lembrete(s)\n\n`;
       
-      meusLembretes.forEach((l, i) => {
-        const dataFormatada = l.dataHora.toLocaleString('pt-BR', {
-          day: '2-digit',
-          month: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit'
-        });
+      // Lembretes pessoais
+      if (meusLembretes.length > 0) {
+        msg += `══════════════════════\n`;
+        msg += `*LEMBRETES PESSOAIS* (${meusLembretes.length})\n\n`;
         
-        msg += `*${i + 1}. Lembrete #${l.id}*\n`;
-        msg += `🕐 ${dataFormatada}\n`;
-        msg += `📝 ${l.mensagem}\n`;
-        msg += `──────────────────────\n\n`;
-      });
+        meusLembretes.forEach((l, i) => {
+          const dataFormatada = l.dataHora.toLocaleString('pt-BR', {
+            day: '2-digit',
+            month: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+          
+          msg += `*${i + 1}. #${l.id}*\n`;
+          msg += `🕐 ${dataFormatada}\n`;
+          msg += `📝 ${l.mensagem}\n\n`;
+        });
+      }
       
+      // Lembretes para clientes
+      if (lembretesParaClientes.length > 0) {
+        msg += `══════════════════════\n`;
+        msg += `*LEMBRETES PARA CLIENTES* (${lembretesParaClientes.length})\n\n`;
+        
+        lembretesParaClientes.forEach((l, i) => {
+          const dataFormatada = l.dataHora.toLocaleString('pt-BR', {
+            day: '2-digit',
+            month: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+          
+          // Extrair telefone do número WhatsApp
+          const telCliente = l.numero.replace('@c.us', '');
+          
+          msg += `*${i + 1}. #${l.id}*\n`;
+          msg += `🕐 ${dataFormatada}\n`;
+          msg += `📱 ${formatarTelefoneExibicao(telCliente)}\n`;
+          msg += `📝 ${l.mensagem.substring(0, 60)}...\n\n`;
+        });
+      }
+      
+      msg += `══════════════════════\n`;
       msg += `*OPÇÕES:*\n`;
+      msg += `*5* - Criar lembrete para cliente\n`;
       msg += `*0* - Menu principal`;
       
       await client.sendText(numero, msg);
-      console.log(`   📋 Listados ${meusLembretes.length} lembretes`);
+      console.log(`   📋 Listados ${total} lembretes (${meusLembretes.length} pessoais + ${lembretesParaClientes.length} para clientes)`);
       return;
     }
     
