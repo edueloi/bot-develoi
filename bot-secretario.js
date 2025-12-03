@@ -38,6 +38,9 @@ const sessoesAtendimento = {};
 const lembretes = [];
 let proximoIdLembrete = 1;
 
+// Sessões de criação de lembrete para cliente: numeroProf -> { etapa, agendamentos, agendamentoSelecionado }
+const sessoesCriacaoLembreteCliente = {};
+
 // Cliente global do WPPConnect
 let clientGlobal = null;
 
@@ -207,6 +210,61 @@ function criarLembrete(numero, mensagem, dataHora) {
   lembretes.push(lembrete);
   console.log(`   ⏰ Lembrete #${lembrete.id} criado para ${numero} em ${dataHora.toLocaleString('pt-BR')}`);
   return lembrete;
+}
+
+// Processar quando enviar lembrete (para cliente) com IA
+async function processarQuandoLembreteCliente(mensagem) {
+  try {
+    const agora = new Date();
+    const prompt = `Analise a mensagem e calcule QUANDO enviar o lembrete.
+
+Mensagem: "${mensagem}"
+
+Data/hora atual: ${agora.toLocaleString('pt-BR')}
+
+RETORNE UM JSON com:
+{
+  "valido": true | false,
+  "quando_texto": "hoje às 15h" | "amanhã às 9h" | "daqui 2 horas",
+  "dataHora": "YYYY-MM-DD HH:MM:SS" (calculado baseado em AGORA)
+}
+
+Exemplos:
+- "hoje 15h" → valido: true, dataHora calculada para hoje 15:00
+- "amanhã 9h" → valido: true, dataHora calculada para amanhã 09:00  
+- "daqui 2 horas" → valido: true, dataHora = agora + 2 horas
+- "daqui 30 minutos" → valido: true, dataHora = agora + 30 min
+
+Responda APENAS JSON válido.`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { 
+          role: "system", 
+          content: "Você é especialista em interpretar horários em português e calcular datas. Sempre calcule baseado no momento atual fornecido." 
+        },
+        { 
+          role: "user", 
+          content: prompt 
+        }
+      ],
+      temperature: 0.2,
+      max_tokens: 200
+    });
+
+    const respostaIA = completion.choices[0].message.content.trim();
+    const jsonMatch = respostaIA.match(/\{[\s\S]*\}/);
+    
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    }
+    
+    return { valido: false };
+  } catch (error) {
+    console.error('   ❌ Erro ao processar quando lembrete:', error.message);
+    return { valido: false };
+  }
 }
 
 // Processar comando de lembrete com IA
