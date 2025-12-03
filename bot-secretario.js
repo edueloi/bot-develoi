@@ -774,8 +774,8 @@ function startBot(client) {
       const saudacao = saudacaoPorHorario();
       
       await client.sendText(
-        numero,
-        `*${saudacao}, ${nomeProfissional}!* ✅\n\n` +
+      numero,
+      `*${saudacao}, ${nomeProfissional}!* ✅\n\n` +
         (estabelecimento ? `📍 *${estabelecimento}*\n\n` : '') +
         `CPF vinculado: *${cpfLimpo}*\n\n` +
         `══════════════════════\n` +
@@ -786,6 +786,8 @@ function startBot(client) {
         `*4* - Todos os agendamentos\n\n` +
         `══════════════════════\n` +
         `*OUTRAS OPÇÕES:*\n\n` +
+        `*5* - Criar lembrete para cliente\n` +
+        `*LEMBRETES* - Ver lembretes ativos\n` +
         `*CPF* - Trocar profissional\n` +
         `*SUPORTE* - Falar com suporte\n` +
         `*VENDAS* - Falar com vendas\n` +
@@ -797,8 +799,13 @@ function startBot(client) {
         `• Novo agendamento criado\n` +
         `• Cliente confirmar presença\n` +
         `• Faltar 1 hora para horário\n\n` +
+        `*LEMBRETES PERSONALIZADOS:*\n` +
+        `Você também pode digitar frases como:\n` +
+        `• "lembre-me daqui 30 min de ligar para cliente"\n` +
+        `• "lembrete amanhã 9h reunião"\n\n` +
         `Digite o número da opção desejada.`
       );
+
       return;
     }
 
