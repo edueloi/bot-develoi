@@ -34,6 +34,10 @@ const cpfPorNumero = {};
 // Sessões de atendimento ativas: numeroCliente -> { tipo, atendente, iniciado }
 const sessoesAtendimento = {};
 
+// Lembretes personalizados: { id, numero, mensagem, dataHora, enviado }
+const lembretes = [];
+let proximoIdLembrete = 1;
+
 // Cliente global do WPPConnect
 let clientGlobal = null;
 
@@ -189,6 +193,118 @@ function formatarDataPtBr(dataISO) {
   }
 }
 
+// Criar lembrete personalizado
+function criarLembrete(numero, mensagem, dataHora) {
+  const lembrete = {
+    id: proximoIdLembrete++,
+    numero: numero,
+    mensagem: mensagem,
+    dataHora: dataHora,
+    enviado: false,
+    criadoEm: new Date()
+  };
+  
+  lembretes.push(lembrete);
+  console.log(`   ⏰ Lembrete #${lembrete.id} criado para ${numero} em ${dataHora.toLocaleString('pt-BR')}`);
+  return lembrete;
+}
+
+// Processar comando de lembrete com IA
+async function processarComandoLembrete(mensagem) {
+  try {
+    const prompt = `Analise a mensagem e extraia informações de lembrete.
+
+Mensagem: "${mensagem}"
+
+Data/hora atual: ${new Date().toLocaleString('pt-BR')}
+
+RETORNE UM JSON com:
+{
+  "eh_lembrete": true | false,
+  "quando": "em X minutos" | "hoje às HH:MM" | "amanhã às HH:MM" | "dia DD/MM às HH:MM",
+  "dataHora": "YYYY-MM-DD HH:MM:SS" (calculado),
+  "mensagem_lembrete": "texto do que lembrar"
+}
+
+Exemplos:
+- "lembre-me daqui 15 minutos" → eh_lembrete: true, quando: "em 15 minutos"
+- "lembrete amanhã 14h" → eh_lembrete: true, quando: "amanhã às 14:00"
+- "me avise hoje às 18h" → eh_lembrete: true, quando: "hoje às 18:00"
+- "lembrar reunião daqui 30min" → eh_lembrete: true, quando: "em 30 minutos"
+
+Se não for comando de lembrete, retorne eh_lembrete: false.
+
+Responda APENAS com JSON válido.`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { 
+          role: "system", 
+          content: "Você é especialista em interpretar comandos de lembretes em português. Calcule datas/horas corretamente baseado no momento atual." 
+        },
+        { 
+          role: "user", 
+          content: prompt 
+        }
+      ],
+      temperature: 0.2,
+      max_tokens: 300
+    });
+
+    const respostaIA = completion.choices[0].message.content.trim();
+    const jsonMatch = respostaIA.match(/\{[\s\S]*\}/);
+    
+    if (jsonMatch) {
+      return JSON.parse(jsonMatch[0]);
+    }
+    
+    return { eh_lembrete: false };
+  } catch (error) {
+    console.error('   ❌ Erro ao processar lembrete com IA:', error.message);
+    return { eh_lembrete: false };
+  }
+}
+
+// Verificar e enviar lembretes pendentes (executa a cada minuto)
+async function verificarLembretes(client) {
+  const agora = new Date();
+  
+  for (const lembrete of lembretes) {
+    if (!lembrete.enviado && lembrete.dataHora <= agora) {
+      try {
+        const mensagemLembrete = 
+          `⏰ *LEMBRETE!*\n\n` +
+          `${lembrete.mensagem}\n\n` +
+          `──────────────────\n` +
+          `_Lembrete criado em ${lembrete.criadoEm.toLocaleString('pt-BR')}_`;
+        
+        await client.sendText(lembrete.numero, mensagemLembrete);
+        lembrete.enviado = true;
+        
+        console.log(`   ✅ Lembrete #${lembrete.id} enviado para ${lembrete.numero}`);
+      } catch (error) {
+        console.error(`   ❌ Erro ao enviar lembrete #${lembrete.id}:`, error.message);
+      }
+    }
+  }
+  
+  // Limpar lembretes antigos (mais de 24h enviados)
+  const umDiaAtras = new Date(agora.getTime() - 24 * 60 * 60 * 1000);
+  const indiceParaRemover = [];
+  
+  lembretes.forEach((lembrete, index) => {
+    if (lembrete.enviado && lembrete.dataHora < umDiaAtras) {
+      indiceParaRemover.push(index);
+    }
+  });
+  
+  // Remover de trás para frente para não bagunçar os índices
+  for (let i = indiceParaRemover.length - 1; i >= 0; i--) {
+    lembretes.splice(indiceParaRemover[i], 1);
+  }
+}
+
 // Chamada à API de agendamentos
 async function chamarApiAgendamentos(cpf, filtros = {}) {
   const url = new URL(API_BASE);
@@ -279,6 +395,13 @@ wppconnect
     console.log('📱 Aguardando mensagens de profissionais...\n');
     clientGlobal = client;
     startBot(client);
+    
+    // Verificar lembretes a cada 30 segundos
+    setInterval(() => {
+      verificarLembretes(client);
+    }, 30000); // 30 segundos
+    
+    console.log('⏰ Sistema de lembretes ativado (verificação a cada 30s)\n');
   })
   .catch((err) => {
     console.error('❌ Erro ao iniciar WPPConnect:', err);
@@ -712,12 +835,17 @@ function startBot(client) {
         `*OUTRAS OPÇÕES:*\n` +
         `*CPF* - Trocar profissional\n` +
         `*SUPORTE* - Falar com suporte\n` +
-        `*VENDAS* - Falar com vendas\n\n` +
+        `*VENDAS* - Falar com vendas\n` +
+        `*LEMBRETES* - Ver lembretes ativos\n\n` +
         `*NOTIFICAÇÕES AUTOMÁTICAS:*\n` +
         `Você recebe avisos quando:\n` +
         `• Novo agendamento criado\n` +
         `• Cliente confirma presença\n` +
         `• Lembrete 1 hora antes\n\n` +
+        `*LEMBRETES PERSONALIZADOS:*\n` +
+        `Digite frases como:\n` +
+        `• "lembre-me daqui 30 min"\n` +
+        `• "lembrete amanhã 14h"\n\n` +
         `Digite apenas o número.`
       );
       console.log('   ✅ Menu enviado');
@@ -970,7 +1098,141 @@ function startBot(client) {
     }
 
     // ====================================
-    // 7) PROCESSAMENTO COM IA (INTELIGÊNCIA ARTIFICIAL)
+    // 7) VERIFICAR SE É COMANDO DE LEMBRETE
+    // ====================================
+    
+    if (
+      texto.includes('lembr') || 
+      texto.includes('avis') ||
+      texto.includes('daqui') ||
+      texto.includes('me lembr') ||
+      texto.includes('me avis')
+    ) {
+      console.log('   ⏰ Detectado possível comando de lembrete...');
+      await client.sendText(numero, '_Processando seu lembrete..._');
+      
+      const resultadoLembrete = await processarComandoLembrete(textoBruto);
+      
+      if (resultadoLembrete.eh_lembrete && resultadoLembrete.dataHora) {
+        try {
+          const dataHoraLembrete = new Date(resultadoLembrete.dataHora);
+          
+          // Verificar se a data é válida e futura
+          if (isNaN(dataHoraLembrete.getTime())) {
+            await client.sendText(
+              numero,
+              `*ERRO NO LEMBRETE* ❌\n\n` +
+              `Não consegui entender a data/hora.\n\n` +
+              `Tente formatos como:\n` +
+              `• "lembre-me daqui 15 minutos"\n` +
+              `• "lembrete amanhã às 14h"\n` +
+              `• "me avise hoje às 18h"\n` +
+              `• "lembrar daqui 1 hora"`
+            );
+            return;
+          }
+          
+          const agora = new Date();
+          if (dataHoraLembrete <= agora) {
+            await client.sendText(
+              numero,
+              `*ERRO NO LEMBRETE* ❌\n\n` +
+              `O horário precisa ser no futuro!\n\n` +
+              `Tente:\n` +
+              `• "lembre-me daqui 10 minutos"\n` +
+              `• "lembrete amanhã às 9h"`
+            );
+            return;
+          }
+          
+          const mensagemLembrete = resultadoLembrete.mensagem_lembrete || textoBruto;
+          const lembrete = criarLembrete(numero, mensagemLembrete, dataHoraLembrete);
+          
+          const dataFormatada = dataHoraLembrete.toLocaleString('pt-BR', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+          
+          await client.sendText(
+            numero,
+            `*LEMBRETE CRIADO!* ⏰\n\n` +
+            `✅ Lembrete #${lembrete.id} agendado\n\n` +
+            `📅 *Quando:* ${resultadoLembrete.quando}\n` +
+            `🕐 *Data/hora:* ${dataFormatada}\n` +
+            `📝 *Mensagem:* ${mensagemLembrete}\n\n` +
+            `══════════════════════\n` +
+            `Vou te avisar no horário marcado! 😊\n\n` +
+            `*OPÇÕES:*\n` +
+            `*LEMBRETES* - Ver lembretes ativos\n` +
+            `*0* - Menu principal`
+          );
+          
+          console.log(`   ✅ Lembrete criado: ${dataFormatada}`);
+          return;
+        } catch (error) {
+          console.error('   ❌ Erro ao criar lembrete:', error);
+          await client.sendText(
+            numero,
+            `*ERRO* ❌\n\n` +
+            `Não consegui criar o lembrete.\n\n` +
+            `Tente: "lembre-me daqui 15 minutos"`
+          );
+          return;
+        }
+      }
+    }
+    
+    // Comando para listar lembretes ativos
+    if (texto === 'lembretes' || texto === 'meus lembretes' || texto === 'ver lembretes') {
+      const meusLembretes = lembretes.filter(l => l.numero === numero && !l.enviado);
+      
+      if (meusLembretes.length === 0) {
+        await client.sendText(
+          numero,
+          `*MEUS LEMBRETES* 📋\n\n` +
+          `Você não tem lembretes ativos.\n\n` +
+          `══════════════════════\n` +
+          `*CRIAR LEMBRETE:*\n\n` +
+          `Digite frases como:\n` +
+          `• "lembre-me daqui 30 minutos"\n` +
+          `• "lembrete hoje às 15h"\n` +
+          `• "me avise amanhã às 9h"\n\n` +
+          `*0* - Menu principal`
+        );
+        return;
+      }
+      
+      let msg = `*MEUS LEMBRETES ATIVOS* ⏰\n\n`;
+      msg += `Você tem ${meusLembretes.length} lembrete(s):\n\n`;
+      msg += `══════════════════════\n\n`;
+      
+      meusLembretes.forEach((l, i) => {
+        const dataFormatada = l.dataHora.toLocaleString('pt-BR', {
+          day: '2-digit',
+          month: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit'
+        });
+        
+        msg += `*${i + 1}. Lembrete #${l.id}*\n`;
+        msg += `🕐 ${dataFormatada}\n`;
+        msg += `📝 ${l.mensagem}\n`;
+        msg += `──────────────────────\n\n`;
+      });
+      
+      msg += `*OPÇÕES:*\n`;
+      msg += `*0* - Menu principal`;
+      
+      await client.sendText(numero, msg);
+      console.log(`   📋 Listados ${meusLembretes.length} lembretes`);
+      return;
+    }
+    
+    // ====================================
+    // 8) PROCESSAMENTO COM IA (INTELIGÊNCIA ARTIFICIAL)
     // ====================================
     
     console.log('   🤖 Tentando processar mensagem com IA...');
@@ -1079,7 +1341,7 @@ function startBot(client) {
     }
     
     // ====================================
-    // 8) COMANDO NÃO RECONHECIDO (após tentar IA)
+    // 9) COMANDO NÃO RECONHECIDO (após tentar IA)
     // ====================================
     
     const desculpas = [
