@@ -1917,17 +1917,15 @@ app.post('/webhook/agendamento-confirmado', async (req, res) => {
       '✅ *AGENDAMENTO CONFIRMADO!*\n\n' +
       `Olá *${cliente_nome}*! 👋\n\n` +
       `Seu agendamento foi confirmado com sucesso!\n\n` +
-      `📍 *${estabelecimento || 'Salão'}*\n` +
-      `👤 *Profissional:* ${profissional_nome || 'Não informado'}\n` +
-      `✂️ *Serviço:* ${servico || 'Não informado'}\n` +
-      `📅 *Data:* ${dataFormatada}\n` +
-      `⏰ *Horário:* ${horaFormatada || 'Não informado'}\n` +
-      (valor ? `💰 *Valor:* R$ ${Number(valor).toFixed(2)}\n` : '') +
-      (observacoes ? `\n📝 *Observações:* ${observacoes}\n` : '') +
+      `*${estabelecimento ? estabelecimento : 'Salão'}*\n` +
+      `*Profissional:* ${profissional_nome || 'Não informado'}\n` +
+      `*Serviço:* ${servico || 'Não informado'}\n` +
+      `*Data:* ${dataFormatada}\n` +
+      `*Horário:* ${horaFormatada || 'Não informado'}\n` +
+      (valor ? `*Valor:* R$ ${Number(valor).toFixed(2)}\n` : '') +
+      (observacoes ? `\n*Observações:* ${observacoes}\n` : '') +
       `\n──────────────────\n` +
       `_Aguardamos você! 😊_\n\n` +
-      `🌐 *Acesse seu agendamento:*\n` +
-      `https://salao.develoi.com\n` +
       `\n` +
       `_Estamos te esperando! Se precisar remarcar ou cancelar, entre em contato._\n\n` +
       `Até logo! 😊`;
@@ -2063,17 +2061,17 @@ app.post('/webhook/lembrete-agendamento', async (req, res) => {
       
       if (numeroProfissional) {
         const msgProfissional =
-          '⏰ *LEMBRETE: CONSULTA PRÓXIMA*\n\n' +
+          '⏰ *LEMBRETE: ATENDIMENTO PRÓXIMO*\n\n' +
           `Você tem um agendamento em *${tempoRestante}*:\n\n` +
-          `📅 *Data:* ${dataFormatada}\n` +
-          `⏰ *Horário:* ${horaFormatada || 'Não informado'}\n` +
-          `👤 *Cliente:* ${cliente_nome || 'Não informado'}\n` +
-          (telefone_cliente ? `📞 *Telefone:* ${telefone_cliente}\n` : '') +
-          `✂️ *Serviço:* ${servico || 'Não informado'}\n` +
-          (valor ? `💰 *Valor:* R$ ${Number(valor).toFixed(2)}\n` : '') +
-          (observacoes ? `\n📝 *Obs:* ${observacoes}\n` : '') +
+          `*Data:* ${dataFormatada}\n` +
+          `*Horário:* ${horaFormatada || 'Não informado'}\n` +
+          `*Cliente:* ${cliente_nome || 'Não informado'}\n` +
+          (telefone_cliente ? `*Telefone:* ${telefone_cliente}\n` : '') +
+          `*Serviço:* ${servico || 'Não informado'}\n` +
+          (valor ? `*Valor:* R$ ${Number(valor).toFixed(2)}\n` : '') +
+          (observacoes ? `\n*Obs:* ${observacoes}\n` : '') +
           `\n──────────────────\n` +
-          `_Prepare-se para atender! 👨‍💼_\n\n` +
+          `_Prepare-se para atender! _\n\n` +
           `🌐 *Ver detalhes no sistema:*\n` +
           `https://salao.develoi.com`;
 
